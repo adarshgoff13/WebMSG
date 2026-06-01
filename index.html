@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebMSG</title>
+  <meta name="description" content="WebMSG – Serverless peer-to-peer browser messaging.">
+
+  <!-- Montserrat -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet">
+
+  <!-- Phosphor Icons -->
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <!-- PeerJS -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Animated background blobs (Silver/Grey Theme) -->
+  <div class="bg-blob b1"></div>
+  <div class="bg-blob b2"></div>
+  <div class="bg-blob b3"></div>
+
+  <!-- Undo-delete toast -->
+  <div id="undo-toast" class="undo-toast">
+    <span>Message deleted.</span>
+    <button id="btn-undo-delete">Undo</button>
+  </div>
+
+  <div id="app">
+
+    <!-- ════════════════════════════════════
+         SERVER RAIL (Far Left)
+    ════════════════════════════════════ -->
+    <nav class="server-rail" id="server-rail">
+      <!-- Servers injected dynamically -->
+      <div class="rail-items" id="rail-servers"></div>
+      
+      <div class="rail-divider"></div>
+      
+      <button class="rail-btn add-btn" id="btn-add-server" title="Add Server">
+        <i class="ph ph-plus"></i>
+      </button>
+    </nav>
+
+    <!-- ════════════════════════════════════
+         LEFT PANEL (Channels & Info)
+    ════════════════════════════════════ -->
+    <aside class="side-panel left-panel" id="left-panel">
+      
+      <div class="panel-header">
+        <h3 id="current-server-name">No Server</h3>
+        <span class="role-badge" id="current-role-badge">Guest</span>
+      </div>
+
+      <div class="panel-scroll">
+        <div class="panel-section">
+          <div class="section-title">
+            <span>Channels</span>
+            <button class="icon-btn-small" id="btn-create-channel" title="Create Channel" style="display:none;"><i class="ph ph-plus"></i></button>
+          </div>
+          <ul class="channel-list" id="channel-list">
+            <!-- Channels injected here -->
+          </ul>
+        </div>
+      </div>
+
+      <div class="panel-footer">
+        <div class="server-info">
+          <span class="info-label">Invite Code</span>
+          <div class="code-box">
+            <span id="display-invite-code">------</span>
+            <button id="btn-copy-code" title="Copy"><i class="ph ph-copy"></i></button>
+          </div>
+        </div>
+        <button class="btn-danger-outline" id="btn-leave-server">
+          <i class="ph ph-sign-out"></i> Leave Server
+        </button>
+      </div>
+
+    </aside>
+
+    <!-- ════════════════════════════════════
+         MAIN CHAT
+    ════════════════════════════════════ -->
+    <main class="chat-main">
+      
+      <header class="chat-header">
+        <div class="ch-left">
+          <i class="ph ph-hash"></i>
+          <h3 id="active-channel-name">general</h3>
+        </div>
+        <div class="ch-right">
+          <!-- Member toggle button removed as requested -->
+        </div>
+      </header>
+
+      <!-- Message feed -->
+      <div class="feed" id="message-feed">
+        <div class="sys-msg init-msg"><span>Select or create a server to start chatting.</span></div>
+      </div>
+
+      <!-- Input area -->
+      <div class="input-area" id="input-area" style="opacity: 0.5; pointer-events: none;">
+        <div class="upload-bar" id="upload-progress-container">
+          <div class="upload-info">
+            <span id="upload-filename">file.png</span>
+            <span id="upload-percent">0%</span>
+          </div>
+          <div class="upload-track"><div class="upload-fill" id="upload-progress-fill"></div></div>
+        </div>
+
+        <div class="emoji-picker" id="emoji-picker"></div>
+
+        <form id="chat-form">
+          <button type="button" class="form-icon" id="btn-emoji" title="Emojis"><i class="ph ph-smiley"></i></button>
+          <button type="button" class="form-icon" id="btn-attach" title="Attach file"><i class="ph ph-paperclip"></i></button>
+          <input type="file" id="file-input" hidden>
+          <input type="text" id="message-input" placeholder="Message..." autocomplete="off">
+          <button type="submit" class="send-btn"><i class="ph-fill ph-paper-plane-right"></i></button>
+        </form>
+      </div>
+
+    </main>
+
+    <!-- ════════════════════════════════════
+         RIGHT PANEL (Members)
+    ════════════════════════════════════ -->
+    <aside class="side-panel right-panel" id="right-panel">
+      <div class="panel-header">
+        <h3>Members (<span id="member-count">0</span>)</h3>
+      </div>
+      <div class="panel-scroll">
+        <ul class="member-list" id="member-list">
+          <!-- Members injected here -->
+        </ul>
+      </div>
+      <div class="panel-footer my-user-footer">
+        <div class="my-av" id="my-av-initial">?</div>
+        <span class="my-name" id="my-username-display">User</span>
+      </div>
+    </aside>
+
+  </div> <!-- #app end -->
+
+  <!-- ════════════════════════════════════
+       LANDING / INTRO PAGE
+  ════════════════════════════════════ -->
+  <div class="landing-page active" id="landing-page">
+    <button class="landing-close" id="btn-close-landing" style="display:none;"><i class="ph ph-x"></i></button>
+    
+    <div class="landing-content">
+      <div class="hero-section">
+        <h1 class="hero-title">WebMSG</h1>
+        <p class="hero-desc">Serverless peer-to-peer browser messaging.</p>
+        <ul class="hero-features">
+          <li><i class="ph-fill ph-lock-key"></i> Full private chats</li>
+          <li><i class="ph-fill ph-hard-drives"></i> Stored in your browser</li>
+          <li><i class="ph-fill ph-code"></i> Fully open source</li>
+        </ul>
+        <div class="hero-footer">
+          <a href="#" id="github-link" title="GitHub Repository"><i class="ph ph-github-logo"></i> GitHub</a>
+        </div>
+      </div>
+
+      <div class="glass-modal">
+        <div class="modal-header">
+          <h2 class="form-title">Get Connected</h2>
+          <p class="form-sub">No account needed. Create or join a server.</p>
+        </div>
+        
+        <div class="modal-body">
+          <div class="tab-toggle">
+            <button class="tab active" id="toggle-host"><i class="ph ph-crown-simple"></i> Host</button>
+            <button class="tab" id="toggle-join"><i class="ph ph-sign-in"></i> Join</button>
+          </div>
+
+          <div class="upload-row">
+            <div class="avatar-upload" id="btn-upload-avatar" title="Profile Picture">
+              <i class="ph ph-user"></i>
+              <img src="" id="avatar-preview" style="display:none;">
+              <input type="file" id="inp-avatar" accept="image/jpeg, image/png, image/webp" hidden>
+            </div>
+            <div class="avatar-upload" id="btn-upload-logo" title="Server Logo">
+              <i class="ph ph-image"></i>
+              <img src="" id="logo-preview" style="display:none;">
+              <input type="file" id="inp-logo" accept="image/jpeg, image/png, image/webp" hidden>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="username">Your Name</label>
+            <div class="field-box">
+              <i class="ph ph-user"></i>
+              <input type="text" id="username" placeholder="Your username" autocomplete="off" maxlength="24">
+            </div>
+          </div>
+
+          <div class="field" id="server-name-group">
+            <label for="server-name">Server Name</label>
+            <div class="field-box">
+              <i class="ph ph-users-three"></i>
+              <input type="text" id="server-name" placeholder="My Awesome Server" autocomplete="off" maxlength="32">
+            </div>
+          </div>
+
+          <div class="field" id="invite-code-group" style="display:none">
+            <label for="invite-code">Invite Code</label>
+            <div class="field-box">
+              <i class="ph ph-key"></i>
+              <input type="text" id="invite-code" placeholder="Paste 6-char code…" autocomplete="off" maxlength="8">
+            </div>
+          </div>
+
+          <button class="btn-main" id="btn-auth-action">
+            <i class="ph ph-rocket-launch"></i> Create Server
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Image Viewer Modal -->
+  <div class="image-viewer-overlay" id="image-viewer">
+    <button class="image-viewer-close" id="btn-close-viewer"><i class="ph ph-x"></i></button>
+    <img src="" alt="Fullscreen Image" id="image-viewer-img">
+  </div>
+
+  <!-- Custom Error Toast -->
+  <div class="error-toast" id="error-toast">
+    <i class="ph-fill ph-warning-circle"></i>
+    <span id="error-toast-msg">Error</span>
+  </div>
+
+  <!-- Create Channel Modal -->
+  <div class="modal-overlay" id="modal-create-channel">
+    <div class="glass-modal" style="max-width: 360px;">
+      <div class="modal-header" style="padding-bottom: 0;">
+        <h2 class="form-title" style="font-size: 20px;">Create Channel</h2>
+        <button class="modal-close" id="btn-close-channel-modal"><i class="ph ph-x"></i></button>
+      </div>
+      <div class="modal-body" style="padding-top: 20px;">
+        <div class="field">
+          <label for="new-channel-name">Channel Name</label>
+          <div class="field-box">
+            <i class="ph ph-hash"></i>
+            <input type="text" id="new-channel-name" placeholder="e.g. memes" autocomplete="off" maxlength="20">
+          </div>
+        </div>
+        <button class="btn-main" id="btn-confirm-create-channel">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
