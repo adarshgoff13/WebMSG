@@ -115,53 +115,10 @@ let pendingUndo = null;
 let undoTimer = null;
 
 const EMOJIS = [
-  // Faces & Emotions
-  "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇",
-  "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚",
-  "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🥸",
-  "🤩", "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁", "☹️",
-  "😣", "😖", "😫", "😩", "🥺", "😢", "😭", "😮‍💨", "😤", "😠",
-  "😡", "🤬", "🤯", "😳", "🥵", "🥶", "😱", "😨", "😰", "😥",
-  "😓", "🤗", "🤔", "🤭", "🤫", "🤥", "😶", "😐", "😑", "😬",
-  "🙄", "😯", "😦", "😧", "😮", "😲", "🥱", "😴", "🤤", "😪",
-  "😵", "😵‍💫", "🤐", "🥴", "🤢", "🤮", "🤧", "😷", "🤒", "🤕",
-  "🤠", "🤡", "🥳", "🥸", "👻", "💀", "☠️", "👽", "👾", "🤖",
-
-  // Hands, Gestures & Body
-  "👋", "🤚", "🖐️", "✋", "🖖", "👌", "🤌", "🤏", "✌️", "🤞",
-  "🤟", "🤘", "🤙", "👈", "👉", "👆", "🖕", "👇", "☝️", "👍",
-  "👎", "✊", "👊", "🤛", "🤜", "👏", "🙌", "👐", "🤲", "🤝",
-  "🙏", "✍️", "💅", "🤳", "💪", "🦾", "🦿", "🦵", "🦶", "👂",
-  "🦻", "👃", "🧠", "🫀", "🫁", "🦷", "🦴", "👀", "👁️", "👅",
-
-  // Hearts, Sparks & Effects
-  "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔",
-  "❤️‍🔥", "❤️‍🩹", "❣️", "💕", "💞", "💓", "💗", "💖", "💘", "💝",
-  "💟", "💥", "🔥", "✨", "🌟", "⭐", "⚡", "☄️", "💥", "💯",
-  "🎉", "🎊", "🎈", "🔮", "🪄", "🧿", "🛎️", "🎀", "🎁", "🎫",
-
-  // Animals & Nature
-  "🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐻‍❄️", "🐨",
-  "🐯", "🦁", "🐮", "🐷", "🐸", "🐵", "🐔", "🐧", "🐦", "🦆",
-  "🦅", "🦉", "🦇", "🐺", "🐗", "🐴", "🦄", "🐝", "🪱", "🐛",
-  "🦋", "🐌", "🐞", "🐜", "🪰", "🪲", "🪳", "🦂", "🕸️", "🕷️",
-  "🐢", "🐍", "🦎", "🐙", "🦑", "🦞", "🦀", "🐡", "🐠", "🐟",
-  "🐬", "🐳", "🐋", "🦈", "🐊", "🐅", "🐆", "🦓", "🦍", "🦧",
-
-  // Food & Drink
-  "🍏", "🍎", "🍐", "🍊", "🍋", "🍌", "🍉", "🍇", "🍓", "🫐",
-  "🍈", "🍒", "🍑", "🥭", "🍍", "🥥", "🥝", "🍅", "🍆", "🥑",
-  "🥦", "🥬", "🥒", "🌶️", "🫑", "🌽", "🥕", "🫒", "🧄", "🧅",
-  "🥔", "🍠", "🥐", "🥯", "🍞", "🥖", "🥨", "🧀", "🥚", "🍳",
-  "🧈", "🥞", "🧇", "🥓", "🥩", "🍗", "🍖", "🌭", "🍔", "🍟",
-  "🍕", "🫓", "🥪", "🥙", "🧆", "🌮", "🌯", "🫔", "🥗", "🍿",
-
-  // Travel, Places & Objects
-  "🚗", "🚕", "🚙", "🚌", "🚎", "🏎️", "🚓", "🚑", "🚒", "🚐",
-  "🛻", "🚚", "🚛", "🚜", "🛵", "🏍️", "🛺", "🚲", "🛴", "🛹",
-  "🚏", "🗺️", "🗿", "🗽", "🗼", "🏰", "🏯", "🏟️", "🎡", "🎢",
-  "🚀", "🛸", "🚁", "🛶", "⛵", "🚤", "🛳️", "⛴️", "🚢", "⚓",
-  "💻", "🖥️", "🖨️", "⌨️", "🖱️", "🖲️", "🗜️", "💽", "💾", "💿"
+  '😀','😂','🤣','😊','😍','🥰','😎','🤓','😭','😤',
+  '👍','👎','🙌','👏','🤝','💪','🔥','✨','🎉','💯',
+  '❤️','💔','👀','🧠','💀','👽','🚀','🛸','🌍','🌙',
+  '🍔','🍕','☕','🍺','🎮','💻','📱','💡','💰','💎'
 ];
 const MAX_FILE = 10 * 1024 * 1024;
 const UNDO_MS = 5000;
@@ -283,7 +240,7 @@ function renderServerRail() {
     btn.title = srv.name;
     
     if (srv.logo) {
-      btn.style.backgroundImage = `url(${srv.logo})`;
+      btn.style.backgroundImage = `url("${srv.logo}")`;
       btn.style.backgroundSize = 'cover';
       btn.style.backgroundPosition = 'center';
       btn.style.color = 'transparent';
@@ -426,9 +383,21 @@ function appendMessageNode(msg) {
     }
   }
 
-  const textHtml = msg.text ? `<div class="msg-bubble">${msg.text}</div>` : '';
+  let parsedText = msg.text || '';
+  let isPinged = false;
+  if (parsedText) {
+    parsedText = parsedText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const pingRegex = /@([a-zA-Z0-9_\s]+?)(?=\s|$|<)/g;
+    parsedText = parsedText.replace(/@([a-zA-Z0-9_]+)/g, (match, username) => {
+      if (username.toLowerCase() === srv.username.toLowerCase() || username.toLowerCase() === 'everyone') isPinged = true;
+      return `<span class="ping">${match}</span>`;
+    });
+    if (isPinged) wrap.classList.add('is-pinged');
+  }
   
-  const canDelete = srv.isHost || isSelf;
+  const textHtml = parsedText ? `<div class="msg-bubble">${parsedText}</div>` : '';
+  
+  const canDelete = true; // Everyone can delete for me or kick
   const actionsHtml = canDelete
     ? `
       <div class="msg-actions">
@@ -475,12 +444,34 @@ function appendMessageNode(msg) {
         document.querySelectorAll('.msg-menu').forEach(m => m.remove());
         const menu = document.createElement('div');
         menu.className = 'msg-menu';
+        
         const delMe = document.createElement('button');
         delMe.textContent = 'Delete for me';
-        const delAll = document.createElement('button');
-        delAll.textContent = 'Delete for everyone';
         menu.appendChild(delMe);
-        menu.appendChild(delAll);
+
+        let delAll = null;
+        if (srv.isHost) {
+          delAll = document.createElement('button');
+          delAll.textContent = 'Delete for everyone';
+          menu.appendChild(delAll);
+          
+          if (!isSelf) {
+            const kickOpt = document.createElement('button');
+            kickOpt.innerHTML = '<i class="ph ph-user-x"></i> Kick User';
+            kickOpt.style.color = 'var(--red)';
+            menu.appendChild(kickOpt);
+            
+            kickOpt.addEventListener('click', () => {
+              const memberObj = srv.members.find(m => m.name === msg.senderName);
+              if (memberObj) {
+                const net = getActiveNet();
+                const conn = net.connections.find(c => c.peer === memberObj.id);
+                if (conn) conn.close();
+              }
+              closeMenu();
+            });
+          }
+        }
         // Position menu near button
         const rect = ellipsisBtn.getBoundingClientRect();
         menu.style.top = `${rect.bottom + window.scrollY}px`;
@@ -493,24 +484,16 @@ function appendMessageNode(msg) {
           showUndoToast(msg, false);
           closeMenu();
         });
-        delAll.addEventListener('click', () => {
-          if (srv.isHost) {
+        if (delAll) {
+          delAll.addEventListener('click', () => {
             // Host deletes globally
             srv.history = srv.history.filter(m => m.id !== msg.id);
             saveState();
             broadcast(srv.id, 'delete_msg', { id: msg.id });
             document.getElementById(`msg-${msg.id}`)?.remove();
-          } else {
-            // Guest requests host to delete
-            const net = getActiveNet();
-            if (net && net.connections[0]?.open) {
-              net.connections[0].send({ type: 'delete_req', id: msg.id });
-            }
-            document.getElementById(`msg-${msg.id}`)?.remove();
-          }
-          showUndoToast(msg, srv.isHost);
-          closeMenu();
-        });
+            closeMenu();
+          });
+        }
       });
     }
 }
@@ -727,6 +710,22 @@ el.btnAddServer.addEventListener('click', () => {
 el.btnCloseLanding.addEventListener('click', () => {
   el.landingPage.classList.remove('active');
 });
+
+// Theme Toggle Logic
+const btnThemeToggle = document.getElementById('btn-theme-toggle');
+if (btnThemeToggle) {
+  const currentTheme = localStorage.getItem('webmsg_theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', currentTheme);
+  btnThemeToggle.innerHTML = currentTheme === 'light' ? '<i class="ph ph-moon"></i>' : '<i class="ph ph-sun"></i>';
+
+  btnThemeToggle.addEventListener('click', () => {
+    const theme = document.documentElement.getAttribute('data-theme');
+    const newTheme = theme === 'light' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', newTheme);
+    localStorage.setItem('webmsg_theme', newTheme);
+    btnThemeToggle.innerHTML = newTheme === 'light' ? '<i class="ph ph-moon"></i>' : '<i class="ph ph-sun"></i>';
+  });
+}
 
 // Upload Handlers
 el.btnUploadAvatar.addEventListener('click', () => el.inpAvatar.click());
