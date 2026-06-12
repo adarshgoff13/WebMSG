@@ -301,18 +301,170 @@ function renderMembers() {
     `;
     el.memberList.appendChild(li);
   });
-  
-  // Add kick logic
+
   el.memberList.querySelectorAll('.kick-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const targetId = btn.getAttribute('data-id');
-      const net = getActiveNet();
-      const conn = net.connections.find(c => c.peer === targetId);
-      if (conn) conn.close();
+      kickUser(targetId);
     });
   });
 }
+
+// ----- Kick User Function -----
+function kickUser(peerId) {
+  // Only host can kick
+  const srv = getActiveSrv();
+  if (!srv || !srv.isHost) return;
+  // Find connection and close it
+  const net = getActiveNet();
+  if (net && net.connections) {
+    const conn = net.connections.find(c => c.peer === peerId);
+    if (conn) conn.close();
+  }
+  // Remove member from server state
+  srv.members = srv.members.filter(m => m.id !== peerId);
+  // Broadcast kick event to remaining peers
+  broadcast(srv.id, 'user_kicked', { id: peerId });
+  // Persist and UI refresh
+  saveState();
+  renderMembers();
+}
+
+// Handle incoming user_kicked event for guests
+function handleUserKicked(data) {
+  const srv = getActiveSrv();
+  if (!srv) return;
+  // Remove from members list
+  srv.members = srv.members.filter(m => m.id !== data.id);
+  // Close any existing connection
+  const net = getActiveNet();
+  if (net && net.connections) {
+    net.connections = net.connections.filter(c => c.peer !== data.id);
+  }
+  saveState();
+  if (activeServerId === srv.id) renderMembers();
+}
+
+// ----- Owner Badge UI -----
+// Replace crown emoji with badge element
+function getOwnerBadgeHtml(isHost) {
+  if (!isHost) return '';
+  return `<span class="owner-badge" title="Server Owner"><i class="ph ph-crown"></i> Owner</span>`;
+}
+
+// ----- Image Viewer Slider & Zoom -----
+const imageViewerState = {
+  imgs: [], // array of src strings
+  index: 0,
+  scale: 1,
+  originX: 0,
+  originY: 0,
+  isPanning: false,
+  startX: 0,
+  startY: 0,
+};
+
+function openImageViewer(src) {
+  // Build list of all image srcs in order of appearance
+  const allImgEls = document.querySelectorAll('.chat-img');
+  imageViewerState.imgs = Array.from(allImgEls).map(el => el.getAttribute('data-src'));
+  imageViewerState.index = imageViewerState.imgs.findIndex(u => u === src);
+  if (imageViewerState.index === -1) imageViewerState.index = 0;
+  showCurrentImage();
+  el.imageViewer.classList.add('active');
+}
+
+function showCurrentImage() {
+  const src = imageViewerState.imgs[imageViewerState.index];
+  if (!src) return;
+  el.imageViewerImg.src = src;
+  imageViewerState.scale = 1;
+  el.imageViewerImg.style.transform = '';
+}
+
+function prevImage() { if (imageViewerState.index > 0) { imageViewerState.index--; showCurrentImage(); } }
+function nextImage() { if (imageViewerState.index < imageViewerState.imgs.length - 1) { imageViewerState.index++; showCurrentImage(); } }
+
+function resetZoom() { imageViewerState.scale = 1; el.imageViewerImg.style.transform = '' ; }
+
+// Wheel zoom
+function onWheel(e) {
+  e.preventDefault();
+  const delta = e.deltaY < 0 ? 0.1 : -0.1;
+  const newScale = Math.min(Math.max(imageViewerState.scale + delta, 0.2), 5);
+  const rect = el.imageViewerImg.getBoundingClientRect();
+  const offsetX = e.clientX - rect.left;
+  const offsetY = e.clientY - rect.top;
+  const percentX = offsetX / rect.width;
+  const percentY = offsetY / rect.height;
+  imageViewerState.originX = percentX * 100;
+  imageViewerState.originY = percentY * 100;
+  imageViewerState.scale = newScale;
+  el.imageViewerImg.style.transform = `scale(${newScale}) translate(${imageViewerState.originX}%, ${imageViewerState.originY}%)`;
+}
+
+// Drag to pan when zoomed
+function onMouseDown(e) {
+  if (imageViewerState.scale <= 1) return;
+  imageViewerState.isPanning = true;
+  imageViewerState.startX = e.clientX;
+  imageViewerState.startY = e.clientY;
+}
+function onMouseMove(e) {
+  if (!imageViewerState.isPanning) return;
+  const dx = e.clientX - imageViewerState.startX;
+  const dy = e.clientY - imageViewerState.startY;
+  imageViewerState.startX = e.clientX;
+  imageViewerState.startY = e.clientY;
+  const currentTransform = el.imageViewerImg.style.transform || '';
+  const match = /translate\(([-\d.]+)%\s*,\s*([-\d.]+)%\)/.exec(currentTransform);
+  let tx = match ? parseFloat(match[1]) : 0;
+  let ty = match ? parseFloat(match[2]) : 0;
+  const moveX = (dx / el.imageViewerImg.width) * 100;
+  const moveY = (dy / el.imageViewerImg.height) * 100;
+  tx += moveX;
+  ty += moveY;
+  el.imageViewerImg.style.transform = `scale(${imageViewerState.scale}) translate(${tx}%, ${ty}%)`;
+}
+function onMouseUp() { imageViewerState.isPanning = false; }
+
+// Add UI controls to image viewer (prev/next/zoom reset)
+document.addEventListener('DOMContentLoaded', () => {
+  const viewerControlsHtml = `
+    <button id="img-prev" class="viewer-btn" title="Previous"><i class="ph ph-caret-left"></i></button>
+    <button id="img-next" class="viewer-btn" title="Next"><i class="ph ph-caret-right"></i></button>
+    <button id="img-zoom-reset" class="viewer-btn" title="Reset Zoom"><i class="ph ph-zoom-out"></i></button>
+  `;
+  // Insert after existing close button
+  const closeBtn = el.btnCloseViewer;
+  if (closeBtn) closeBtn.insertAdjacentHTML('afterend', viewerControlsHtml);
+
+  // Event Listeners for viewer controls
+  const prevBtn = document.getElementById('img-prev');
+  const nextBtn = document.getElementById('img-next');
+  const resetBtn = document.getElementById('img-zoom-reset');
+  if (prevBtn) prevBtn.addEventListener('click', prevImage);
+  if (nextBtn) nextBtn.addEventListener('click', nextImage);
+  if (resetBtn) resetBtn.addEventListener('click', resetZoom);
+  
+  if (el.imageViewerImg) {
+    el.imageViewerImg.addEventListener('wheel', onWheel);
+    el.imageViewerImg.addEventListener('mousedown', onMouseDown);
+  }
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
+
+  // Keyboard navigation
+  document.addEventListener('keydown', e => {
+    if (!el.imageViewer || !el.imageViewer.classList.contains('active')) return;
+    if (e.key === 'ArrowLeft') prevImage();
+    if (e.key === 'ArrowRight') nextImage();
+    if (e.key === 'Escape') el.btnCloseViewer.click();
+  });
+});
+
+
 
 function renderMessages() {
   const srv = getActiveSrv();
@@ -339,8 +491,10 @@ function appendMessageNode(msg) {
   wrap.className = `msg-item ${isSelf ? 'is-self' : ''} ${msg.isHost ? 'is-host' : ''}`;
   wrap.id = `msg-${msg.id}`;
 
-  const crownHtml = msg.isHost ? `<span class="crown-badge" title="Server Owner">👑</span>` : '';
-  const hostTagHtml = msg.isHost ? `<span class="host-tag">Host</span>` : '';
+  // Replace crown emoji with badge in member list
+  const crownHtml = '';
+  const hostTagHtml = '';
+
   
   // Find sender avatar
   let senderAv = msg.senderName.charAt(0).toUpperCase();
@@ -424,14 +578,13 @@ function appendMessageNode(msg) {
   if (sysMsg) sysMsg.remove();
 
   el.messageFeed.appendChild(wrap);
-  el.messageFeed.scrollTop = el.messageFeed.scrollHeight;
+  el.messageFeed.scrollTo({ top: el.messageFeed.scrollHeight, behavior: 'smooth' });
 
   // Image Viewer Handler
   const imgEl = wrap.querySelector('.chat-img');
   if (imgEl) {
     imgEl.addEventListener('click', () => {
-      el.imageViewerImg.src = imgEl.getAttribute('data-src');
-      el.imageViewer.classList.add('active');
+      openImageViewer(imgEl.getAttribute('data-src'));
     });
   }
 
@@ -533,7 +686,9 @@ function connectHost(roomId, name) {
 
       if (payload.type === 'join') {
         guestName = payload.name;
-        srvObj.members.push({ id: conn.peer, name: guestName, isHost: false, avatar: payload.avatar || null });
+      // When a guest joins, assign role member
+      srvObj.members.push({ id: conn.peer, name: guestName, isHost: false, avatar: payload.avatar || null, role: 'member' });
+
         activeConnections[roomId].connections.push(conn);
         saveState();
         
@@ -607,7 +762,7 @@ function connectHost(roomId, name) {
   });
 }
 
-function connectGuest(targetId, name, guestAvatar) {
+function connectGuest(targetId, name, guestAvatar, isNewJoin = false) {
   const peer = new Peer({ debug: 0 });
   activeConnections[targetId] = { peer, connections: [] };
   
@@ -616,6 +771,12 @@ function connectGuest(targetId, name, guestAvatar) {
       showErrorToast(`Connection to ${targetId} timed out. Host might be offline.`);
       peer.destroy();
       delete activeConnections[targetId];
+      if (isNewJoin) {
+        delete savedServers[targetId];
+        saveState();
+        if (activeServerId === targetId) activeServerId = null;
+        renderApp();
+      }
     }
   }, 8000);
 
@@ -674,6 +835,9 @@ function connectGuest(targetId, name, guestAvatar) {
           renderApp();
         }
       }
+      else if (payload.type === 'user_kicked') {
+        handleUserKicked(payload.data);
+      }
     });
 
     conn.on('close', () => {
@@ -687,6 +851,12 @@ function connectGuest(targetId, name, guestAvatar) {
   peer.on('error', err => {
     if(connTimeout) clearTimeout(connTimeout);
     showErrorToast(`Could not connect to ${targetId}: ` + err.message);
+    if (isNewJoin) {
+      delete savedServers[targetId];
+      saveState();
+      if (activeServerId === targetId) activeServerId = null;
+      renderApp();
+    }
   });
 }
 
@@ -778,12 +948,19 @@ el.btnAuthAction.addEventListener('click', () => {
   if (isHost) {
     const sname = el.serverNameInp.value.trim() || `${username}'s Server`;
     roomId = genId(6);
+    // Add role property when host creates server
     savedServers[roomId] = {
-      id: roomId, name: sname,
-      isHost: true, username: username,
+      id: roomId,
+      name: sname,
+      isHost: true,
+      username: username,
       logo: currentLogoBase64,
+      roles: {
+        admin: { canKick: true, canChangeName: true, color: '#FF5555' },
+        member: { canKick: false, canChangeName: false, color: '#FFFFFF' }
+      },
       channels: [{id: 'general', name: 'general'}],
-      members: [{id: 'host', name: username, isHost: true, avatar: currentAvatarBase64}],
+      members: [{id: 'host', name: username, isHost: true, avatar: currentAvatarBase64, role: 'admin'}],
       history: []
     };
     saveState();
@@ -793,14 +970,19 @@ el.btnAuthAction.addEventListener('click', () => {
     if (!roomId) { showErrorToast('Enter invite code.'); return; }
     if (savedServers[roomId]) { showErrorToast('You already have this server saved.'); return; }
 
+    // Add role for guest when they join (default to member)
     savedServers[roomId] = {
       id: roomId, name: `Server ${roomId}`,
       isHost: false, username: username,
       logo: null,
+      roles: {
+        admin: { canKick: true, canChangeName: true, color: '#FF5555' },
+        member: { canKick: false, canChangeName: false, color: '#FFFFFF' }
+      },
       channels: [], members: [], history: []
     };
     saveState();
-    connectGuest(roomId, username, currentAvatarBase64);
+    connectGuest(roomId, username, currentAvatarBase64, true);
   }
 
   activeServerId = roomId;

@@ -6,11 +6,11 @@
 /* ── 0. TOKENS ───────────────────────────────────────────── */
 :root {
   /* ORIGINAL DARK THEME + macOS Glassmorphism */
-  --bg:         #0A0B0E;
+  --bg:         #050505; /* Darker black */
   
   /* Glass panels (lighter than bg to stand out) */
-  --glass:      rgba(30, 30, 35, 0.35);
-  --glass2:     rgba(20, 20, 25, 0.15);
+  --glass:      rgba(20, 20, 20, 0.45);
+  --glass2:     rgba(15, 15, 15, 0.25);
   --glass-hover:rgba(255, 255, 255, 0.08);
   --glass-input:rgba(255, 255, 255, 0.05);
   
@@ -52,26 +52,31 @@
 }
 
 [data-theme="light"] {
-  --bg: #F8FAFC;
-  --glass: rgba(255, 255, 255, 0.45);
-  --glass2: rgba(255, 255, 255, 0.25);
-  --glass-hover: rgba(255, 255, 255, 0.7);
-  --glass-input: rgba(255, 255, 255, 0.6);
+  --bg: #E0E0E0; /* 80-85% neutral white/gray */
+  --bg-light: #E0E0E0;
+  --surface-light: rgba(255, 255, 255, 0.65); /* Brighten up the glass panels slightly */
+  --glass: var(--surface-light);
+  --glass2: rgba(255, 255, 255, 0.45);
+  --glass-hover: rgba(0, 0, 0, 0.05);
+  --glass-input: rgba(255, 255, 255, 0.7);
   
-  --border: rgba(0, 0, 0, 0.08);
-  --border-h: rgba(0, 0, 0, 0.15);
+  --border: rgba(0, 0, 0, 0.1);
+  --border-light: rgba(0, 0, 0, 0.1);
+  --border-h: rgba(0, 0, 0, 0.2);
   
-  --accent: #1E293B; 
-  --accent-dim: rgba(30, 41, 59, 0.08);
-  --accent-glow: rgba(30, 41, 59, 0.2);
-  --accent-hover: #0F172A;
+  --accent: #000000; /* Pure black accents */
+  --accent-dim: rgba(0, 0, 0, 0.08);
+  --accent-glow: rgba(0, 0, 0, 0.15);
+  --accent-hover: #222222;
   
   --text: #000000;
-  --muted: #475569;
+  --text-primary-light: #000000;
+  --text-secondary-light: #333333;
+  --muted: #444444;
   
-  --blob-1: #FFEADD; /* Light skin/peach */
-  --blob-2: #FDF1EB; /* Skinish white */
-  --blob-3: #E8D5C8; /* Tan/Skin tone */
+  --blob-1: #D1D5DB; /* Neutral gray blob */
+  --blob-2: #E5E7EB; /* Lighter neutral gray */
+  --blob-3: #F3F4F6; /* Softest gray */
   --blob-op: 0.9;
 
   --chat-bg: transparent;
@@ -574,3 +579,31 @@ a{color:inherit;text-decoration:none}
   transition: all var(--ease); border: 1px solid rgba(255,255,255,0.2); box-shadow: var(--shadow-md);
 }
 .image-viewer-close:hover { background: rgba(255,255,255,0.25); transform: scale(1.1); }
+
+.viewer-btn {
+  position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,0.1); backdrop-filter: blur(10px);
+  color: #fff; width: 44px; height: 44px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; font-size: 24px; cursor: pointer;
+  transition: all var(--ease); border: 1px solid rgba(255,255,255,0.2); box-shadow: var(--shadow-md); z-index: 2001;
+}
+.viewer-btn:hover { background: rgba(255,255,255,0.25); transform: translateY(-50%) scale(1.1); }
+#img-prev { left: 24px; }
+#img-next { right: 24px; }
+#img-zoom-reset { top: 24px; right: 80px; transform: none; }
+#img-zoom-reset:hover { transform: scale(1.1); }
+
+/* Owner Badge */
+.owner-badge {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; margin-left: 6px;
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px;
+  background: var(--glass); border: 1px solid var(--border); border-radius: var(--r-pill);
+  color: #d4af37; /* Gold color */
+  font-weight: bold; box-shadow: var(--shadow-sm); backdrop-filter: blur(4px);
+}
+.owner-badge i { font-size: 14px; }
+
+/* FadeIn Animation */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
