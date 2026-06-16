@@ -15,7 +15,7 @@
   <script src="https://unpkg.com/@phosphor-icons/web"></script>
   <!-- PeerJS -->
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=5">
 
   <!-- Theme Initialization (Prevents FOUC) -->
   <script>
@@ -100,8 +100,11 @@
         <div class="ch-left">
           <i class="ph ph-hash"></i>
           <h3 id="active-channel-name">general</h3>
+          <span id="channel-desc-header" class="ch-desc"></span>
         </div>
         <div class="ch-right">
+          <button id="btn-search" title="Search Messages" class="header-icon-btn"><i class="ph ph-magnifying-glass"></i></button>
+          <button id="btn-pinned" title="Pinned Messages" class="header-icon-btn"><i class="ph ph-push-pin"></i></button>
           <button id="btn-theme-toggle" title="Toggle Theme" style="background: var(--glass2); color: var(--text); width: 36px; height: 36px; border-radius: 50%; font-size: 16px; cursor: pointer; border: none; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow-sm);">
             <i class="ph ph-sun"></i>
           </button>
@@ -237,12 +240,33 @@
   <div class="image-viewer-overlay" id="image-viewer">
     <button class="image-viewer-close" id="btn-close-viewer"><i class="ph ph-x"></i></button>
     <img src="" alt="Fullscreen Image" id="image-viewer-img">
+    <div class="zoom-controls">
+      <i class="ph ph-minus"></i>
+      <input type="range" id="zoom-slider" min="0.2" max="5" step="0.1" value="1">
+      <i class="ph ph-plus"></i>
+    </div>
   </div>
 
   <!-- Custom Error Toast -->
   <div class="error-toast" id="error-toast">
     <i class="ph-fill ph-warning-circle"></i>
     <span id="error-toast-msg">Error</span>
+  </div>
+
+  <!-- Custom Confirm Modal -->
+  <div class="modal-overlay" id="modal-confirm">
+    <div class="glass-modal" style="max-width: 320px; text-align: center;">
+      <div class="modal-header" style="padding-bottom: 10px; justify-content: center; border-bottom: none;">
+        <h2 class="form-title" id="confirm-title" style="font-size: 20px;">Confirm</h2>
+      </div>
+      <div class="modal-body" style="padding-top: 0;">
+        <p id="confirm-message" style="margin-bottom: 20px; color: var(--muted); font-size: 0.9rem; line-height: 1.5;"></p>
+        <div style="display: flex; gap: 10px;">
+          <button class="btn-main" id="btn-confirm-cancel" style="background: var(--glass2); color: var(--text); box-shadow: none; border: 1px solid var(--border);">Cancel</button>
+          <button class="btn-main" id="btn-confirm-ok" style="background: var(--red); box-shadow: none; border: none;">Confirm</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Create Channel Modal -->
@@ -260,11 +284,46 @@
             <input type="text" id="new-channel-name" placeholder="e.g. memes" autocomplete="off" maxlength="20">
           </div>
         </div>
+        <div class="field">
+          <label for="new-channel-desc">Description <span style="opacity:0.5;font-size:0.75rem;">(optional)</span></label>
+          <div class="field-box">
+            <i class="ph ph-text-align-left"></i>
+            <input type="text" id="new-channel-desc" placeholder="What's this channel about?" autocomplete="off" maxlength="80">
+          </div>
+        </div>
         <button class="btn-main" id="btn-confirm-create-channel">Create</button>
       </div>
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <!-- Search Overlay -->
+  <div class="side-overlay" id="search-panel">
+    <div class="side-overlay-inner">
+      <div class="overlay-header">
+        <h3><i class="ph ph-magnifying-glass"></i> Search</h3>
+        <button class="modal-close" id="btn-close-search"><i class="ph ph-x"></i></button>
+      </div>
+      <div class="overlay-search-bar">
+        <div class="field-box">
+          <i class="ph ph-magnifying-glass"></i>
+          <input type="text" id="search-input" placeholder="Search messages &amp; files..." autocomplete="off">
+        </div>
+      </div>
+      <ul class="pinned-result-list" id="search-results"></ul>
+    </div>
+  </div>
+
+  <!-- Pinned Messages Overlay -->
+  <div class="side-overlay" id="pinned-panel">
+    <div class="side-overlay-inner">
+      <div class="overlay-header">
+        <h3><i class="ph ph-push-pin"></i> Pinned Messages</h3>
+        <button class="modal-close" id="btn-close-pinned"><i class="ph ph-x"></i></button>
+      </div>
+      <ul class="pinned-result-list" id="pinned-list"></ul>
+    </div>
+  </div>
+
+  <script src="app.js?v=5"></script>
 </body>
 </html>

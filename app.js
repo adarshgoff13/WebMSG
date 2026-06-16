@@ -69,7 +69,21 @@ const el = {
   modalCreateChannel: document.getElementById('modal-create-channel'),
   btnCloseChannelModal: document.getElementById('btn-close-channel-modal'),
   newChannelName: document.getElementById('new-channel-name'),
+  newChannelDesc: document.getElementById('new-channel-desc'),
   btnConfirmCreateChannel: document.getElementById('btn-confirm-create-channel'),
+
+  // Search
+  btnSearch: document.getElementById('btn-search'),
+  searchPanel: document.getElementById('search-panel'),
+  searchInput: document.getElementById('search-input'),
+  searchResults: document.getElementById('search-results'),
+  btnCloseSearch: document.getElementById('btn-close-search'),
+
+  // Pinned Messages
+  btnPinned: document.getElementById('btn-pinned'),
+  pinnedPanel: document.getElementById('pinned-panel'),
+  pinnedList: document.getElementById('pinned-list'),
+  btnClosePinned: document.getElementById('btn-close-pinned'),
 
   // Toasts & Modals
   undoToast: document.getElementById('undo-toast'),
@@ -270,16 +284,55 @@ function renderChannels() {
   srv.channels.forEach(ch => {
     const li = document.createElement('li');
     li.className = `list-item ${ch.id === activeChannelId ? 'active' : ''}`;
-    li.innerHTML = `<i class="ph ph-hash"></i> <span>${ch.name}</span>`;
-    li.addEventListener('click', () => {
+    li.title = ch.desc || '';
+    li.innerHTML = `
+      <i class="ph ph-hash"></i>
+      <span class="ch-name">${ch.name}</span>
+      ${srv.isHost ? `<button class="ch-delete-btn" data-id="${ch.id}" title="Delete channel"><i class="ph ph-trash"></i></button>` : ''}
+    `;
+    li.querySelector('.ch-name')?.addEventListener('click', () => {
       activeChannelId = ch.id;
-      renderApp(); // re-render messages and active state
+      renderApp();
+    });
+    li.addEventListener('click', (e) => {
+      if (e.target.closest('.ch-delete-btn')) return;
+      activeChannelId = ch.id;
+      renderApp();
     });
     el.channelList.appendChild(li);
+  });
+
+  // Delete channel handler (host only)
+  el.channelList.querySelectorAll('.ch-delete-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const chId = btn.getAttribute('data-id');
+      deleteChannel(chId);
+    });
   });
   
   const actCh = srv.channels.find(c => c.id === activeChannelId);
   el.activeChannelName.textContent = actCh ? actCh.name : 'general';
+
+  // Show channel description in header if any
+  const descEl = document.getElementById('channel-desc-header');
+  if (descEl) descEl.textContent = actCh && actCh.desc ? actCh.desc : '';
+}
+
+function deleteChannel(chId) {
+  const srv = getActiveSrv();
+  if (!srv || !srv.isHost) return;
+  if (srv.channels.length <= 1) { showErrorToast('Cannot delete the last channel'); return; }
+  
+  showCustomConfirm('Delete Channel', `Delete #${chId}? All messages in this channel will be lost.`, 'Delete', true, () => {
+    srv.channels = srv.channels.filter(c => c.id !== chId);
+    srv.history = srv.history.filter(m => m.channelId !== chId);
+    if (activeChannelId === chId) activeChannelId = srv.channels[0]?.id || 'general';
+    saveState();
+    broadcast(srv.id, 'channel_update', srv.channels);
+    broadcast(srv.id, 'full_history', srv.history);
+    renderApp();
+  });
 }
 
 function renderMembers() {
@@ -358,8 +411,8 @@ const imageViewerState = {
   imgs: [], // array of src strings
   index: 0,
   scale: 1,
-  originX: 0,
-  originY: 0,
+  tx: 0,
+  ty: 0,
   isPanning: false,
   startX: 0,
   startY: 0,
@@ -380,33 +433,29 @@ function showCurrentImage() {
   if (!src) return;
   el.imageViewerImg.src = src;
   imageViewerState.scale = 1;
+  imageViewerState.tx = 0;
+  imageViewerState.ty = 0;
   el.imageViewerImg.style.transform = '';
+  if (el.zoomSlider) el.zoomSlider.value = 1;
 }
 
-function prevImage() { if (imageViewerState.index > 0) { imageViewerState.index--; showCurrentImage(); } }
-function nextImage() { if (imageViewerState.index < imageViewerState.imgs.length - 1) { imageViewerState.index++; showCurrentImage(); } }
-
-function resetZoom() { imageViewerState.scale = 1; el.imageViewerImg.style.transform = '' ; }
+function updateZoom(newScale) {
+  imageViewerState.scale = Math.min(Math.max(newScale, 0.2), 5);
+  el.imageViewerImg.style.transform = `translate(${imageViewerState.tx}px, ${imageViewerState.ty}px) scale(${imageViewerState.scale})`;
+  if (el.zoomSlider) el.zoomSlider.value = imageViewerState.scale;
+}
 
 // Wheel zoom
 function onWheel(e) {
   e.preventDefault();
   const delta = e.deltaY < 0 ? 0.1 : -0.1;
-  const newScale = Math.min(Math.max(imageViewerState.scale + delta, 0.2), 5);
-  const rect = el.imageViewerImg.getBoundingClientRect();
-  const offsetX = e.clientX - rect.left;
-  const offsetY = e.clientY - rect.top;
-  const percentX = offsetX / rect.width;
-  const percentY = offsetY / rect.height;
-  imageViewerState.originX = percentX * 100;
-  imageViewerState.originY = percentY * 100;
-  imageViewerState.scale = newScale;
-  el.imageViewerImg.style.transform = `scale(${newScale}) translate(${imageViewerState.originX}%, ${imageViewerState.originY}%)`;
+  updateZoom(imageViewerState.scale + delta);
 }
 
 // Drag to pan when zoomed
 function onMouseDown(e) {
   if (imageViewerState.scale <= 1) return;
+  e.preventDefault(); // Prevents the browser's native drag-and-drop from interrupting panning
   imageViewerState.isPanning = true;
   imageViewerState.startX = e.clientX;
   imageViewerState.startY = e.clientY;
@@ -417,37 +466,25 @@ function onMouseMove(e) {
   const dy = e.clientY - imageViewerState.startY;
   imageViewerState.startX = e.clientX;
   imageViewerState.startY = e.clientY;
-  const currentTransform = el.imageViewerImg.style.transform || '';
-  const match = /translate\(([-\d.]+)%\s*,\s*([-\d.]+)%\)/.exec(currentTransform);
-  let tx = match ? parseFloat(match[1]) : 0;
-  let ty = match ? parseFloat(match[2]) : 0;
-  const moveX = (dx / el.imageViewerImg.width) * 100;
-  const moveY = (dy / el.imageViewerImg.height) * 100;
-  tx += moveX;
-  ty += moveY;
-  el.imageViewerImg.style.transform = `scale(${imageViewerState.scale}) translate(${tx}%, ${ty}%)`;
+  imageViewerState.tx += dx;
+  imageViewerState.ty += dy;
+  el.imageViewerImg.style.transform = `translate(${imageViewerState.tx}px, ${imageViewerState.ty}px) scale(${imageViewerState.scale})`;
 }
 function onMouseUp() { imageViewerState.isPanning = false; }
 
-// Add UI controls to image viewer (prev/next/zoom reset)
+// Add UI controls to image viewer (slider)
 document.addEventListener('DOMContentLoaded', () => {
-  const viewerControlsHtml = `
-    <button id="img-prev" class="viewer-btn" title="Previous"><i class="ph ph-caret-left"></i></button>
-    <button id="img-next" class="viewer-btn" title="Next"><i class="ph ph-caret-right"></i></button>
-    <button id="img-zoom-reset" class="viewer-btn" title="Reset Zoom"><i class="ph ph-zoom-out"></i></button>
-  `;
-  // Insert after existing close button
-  const closeBtn = el.btnCloseViewer;
-  if (closeBtn) closeBtn.insertAdjacentHTML('afterend', viewerControlsHtml);
+  el.zoomSlider = document.getElementById('zoom-slider');
+  if (el.zoomSlider) {
+    el.zoomSlider.addEventListener('input', (e) => {
+      updateZoom(parseFloat(e.target.value));
+    });
+    const zoomMinus = el.zoomSlider.previousElementSibling;
+    const zoomPlus = el.zoomSlider.nextElementSibling;
+    if (zoomMinus) zoomMinus.addEventListener('click', () => updateZoom(imageViewerState.scale - 0.2));
+    if (zoomPlus) zoomPlus.addEventListener('click', () => updateZoom(imageViewerState.scale + 0.2));
+  }
 
-  // Event Listeners for viewer controls
-  const prevBtn = document.getElementById('img-prev');
-  const nextBtn = document.getElementById('img-next');
-  const resetBtn = document.getElementById('img-zoom-reset');
-  if (prevBtn) prevBtn.addEventListener('click', prevImage);
-  if (nextBtn) nextBtn.addEventListener('click', nextImage);
-  if (resetBtn) resetBtn.addEventListener('click', resetZoom);
-  
   if (el.imageViewerImg) {
     el.imageViewerImg.addEventListener('wheel', onWheel);
     el.imageViewerImg.addEventListener('mousedown', onMouseDown);
@@ -458,8 +495,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Keyboard navigation
   document.addEventListener('keydown', e => {
     if (!el.imageViewer || !el.imageViewer.classList.contains('active')) return;
-    if (e.key === 'ArrowLeft') prevImage();
-    if (e.key === 'ArrowRight') nextImage();
     if (e.key === 'Escape') el.btnCloseViewer.click();
   });
 });
@@ -485,6 +520,22 @@ function appendMessageNode(msg) {
   if (document.getElementById(`msg-${msg.id}`)) return; // Prevent dupes
 
   const srv = getActiveSrv();
+  
+  if (msg.isSystem) {
+    const wrap = document.createElement('div');
+    wrap.className = 'sys-msg';
+    wrap.id = `msg-${msg.id}`;
+    wrap.innerHTML = `<span>${msg.text}</span>`;
+    
+    // Clear welcome text if it's the first message
+    const welcomeMsg = el.messageFeed.querySelector('.sys-msg');
+    if (welcomeMsg && welcomeMsg.textContent.includes('Welcome')) welcomeMsg.remove();
+    
+    el.messageFeed.appendChild(wrap);
+    el.messageFeed.scrollTo({ top: el.messageFeed.scrollHeight, behavior: 'smooth' });
+    return;
+  }
+
   const isSelf = msg.senderName === srv.username; // simplistic check
 
   const wrap = document.createElement('div');
@@ -625,6 +676,15 @@ function appendMessageNode(msg) {
             });
           }
         }
+        // Pin/Unpin option
+        const isPinned = (srv.pinned || []).some(p => p.id === msg.id);
+        const pinBtn = document.createElement('button');
+        pinBtn.innerHTML = isPinned
+          ? '<i class="ph ph-push-pin-slash"></i> Unpin Message'
+          : '<i class="ph ph-push-pin"></i> Pin Message';
+        menu.appendChild(pinBtn);
+        pinBtn.addEventListener('click', () => { pinMessage(msg, !isPinned); closeMenu(); });
+
         // Position menu near button
         const rect = ellipsisBtn.getBoundingClientRect();
         menu.style.top = `${rect.bottom + window.scrollY}px`;
@@ -639,11 +699,9 @@ function appendMessageNode(msg) {
         });
         if (delAll) {
           delAll.addEventListener('click', () => {
-            // Host deletes globally
-            srv.history = srv.history.filter(m => m.id !== msg.id);
-            saveState();
-            broadcast(srv.id, 'delete_msg', { id: msg.id });
+            // Host deletes globally, but we use undo toast first
             document.getElementById(`msg-${msg.id}`)?.remove();
+            showUndoToast(msg, true);
             closeMenu();
           });
         }
@@ -656,6 +714,139 @@ function appendSysMsg(text) {
   d.className = 'sys-msg'; d.innerHTML = `<span>${text}</span>`;
   el.messageFeed.appendChild(d);
   el.messageFeed.scrollTop = el.messageFeed.scrollHeight;
+}
+
+/* ── Pin Message ── */
+function pinMessage(msg, shouldPin) {
+  const srv = getActiveSrv();
+  if (!srv) return;
+  if (!srv.pinned) srv.pinned = [];
+  if (shouldPin) {
+    if (!srv.pinned.find(p => p.id === msg.id)) {
+      srv.pinned.push(msg);
+      
+      const text = `${srv.username} has pinned a message.`;
+      
+      if (srv.isHost) {
+        const sysMsg = {
+          id: `sys-${Date.now()}-${genId(4)}`,
+          channelId: activeChannelId,
+          senderId: 'system',
+          senderName: 'System',
+          text, time: ts(), isSystem: true
+        };
+        srv.history.push(sysMsg);
+        appendMessageNode(sysMsg);
+        broadcast(srv.id, 'new_message', sysMsg);
+      } else {
+        appendSysMsg(text);
+      }
+    }
+  } else {
+    srv.pinned = srv.pinned.filter(p => p.id !== msg.id);
+  }
+  saveState();
+  if (srv.isHost) broadcast(srv.id, 'pin_update', srv.pinned);
+  renderPinnedPanel();
+}
+
+function renderPinnedPanel() {
+  if (!el.pinnedList) return;
+  const srv = getActiveSrv();
+  const pinned = (srv && srv.pinned) ? srv.pinned : [];
+  el.pinnedList.innerHTML = '';
+  if (pinned.length === 0) {
+    el.pinnedList.innerHTML = '<li class="sys-msg" style="padding:16px;"><span>No pinned messages yet.</span></li>';
+    return;
+  }
+  pinned.slice().reverse().forEach(msg => {
+    const li = document.createElement('li');
+    li.className = 'pinned-item';
+    
+    let previewHtml = '';
+    if (msg.file) {
+      if (msg.file.mime && msg.file.mime.startsWith('image/')) {
+        previewHtml = `<div class="pinned-preview"><img src="${msg.file.data}" style="max-height: 80px; border-radius: 4px; margin-top: 6px;"></div>`;
+      } else {
+        previewHtml = `<div class="pinned-preview" style="margin-top: 6px; font-size: 0.8rem; color: var(--accent);"><i class="ph ph-file"></i> ${msg.file.name}</div>`;
+      }
+    }
+    
+    li.innerHTML = `
+      <div class="pinned-meta"><i class="ph ph-push-pin" style="color:var(--accent);"></i> <strong>${msg.senderName}</strong> <span class="time">${msg.time}</span></div>
+      <div class="pinned-text">${msg.text ? msg.text.substring(0, 120) + (msg.text.length > 120 ? '…' : '') : ''}</div>
+      ${previewHtml}
+      ${ (srv && srv.isHost) ? `<button class="pin-remove-btn" data-id="${msg.id}" title="Unpin"><i class="ph ph-x"></i></button>` : ''}
+    `;
+    // Jump to message on click
+    li.addEventListener('click', (e) => {
+      if (e.target.closest('.pin-remove-btn')) return;
+      const msgEl = document.getElementById(`msg-${msg.id}`);
+      if (msgEl) { msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); msgEl.classList.add('highlight-msg'); setTimeout(() => msgEl.classList.remove('highlight-msg'), 2000); }
+      closePinnedPanel();
+    });
+    el.pinnedList.appendChild(li);
+  });
+  el.pinnedList.querySelectorAll('.pin-remove-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-id');
+      const srv2 = getActiveSrv();
+      if (srv2) pinMessage(srv2.pinned.find(p => p.id === id), false);
+    });
+  });
+}
+
+function openPinnedPanel() {
+  if (!el.pinnedPanel) return;
+  renderPinnedPanel();
+  el.pinnedPanel.classList.add('active');
+}
+function closePinnedPanel() { el.pinnedPanel?.classList.remove('active'); }
+
+/* ── Search ── */
+function openSearchPanel() {
+  if (!el.searchPanel) return;
+  el.searchPanel.classList.add('active');
+  el.searchInput?.focus();
+  renderSearchResults('');
+}
+function closeSearchPanel() { el.searchPanel?.classList.remove('active'); }
+
+function renderSearchResults(query) {
+  if (!el.searchResults) return;
+  const srv = getActiveSrv();
+  if (!srv) { el.searchResults.innerHTML = ''; return; }
+  const q = query.toLowerCase().trim();
+  const results = q === '' ? [] : srv.history.filter(m => {
+    const textMatch = m.text && m.text.toLowerCase().includes(q);
+    const fileMatch = m.file && m.file.name && m.file.name.toLowerCase().includes(q);
+    return textMatch || fileMatch;
+  });
+  el.searchResults.innerHTML = '';
+  if (q === '') {
+    el.searchResults.innerHTML = '<li class="sys-msg" style="padding:16px;"><span>Type to search messages and files...</span></li>';
+    return;
+  }
+  if (results.length === 0) {
+    el.searchResults.innerHTML = '<li class="sys-msg" style="padding:16px;"><span>No results found.</span></li>';
+    return;
+  }
+  results.forEach(msg => {
+    const li = document.createElement('li');
+    li.className = 'search-result-item';
+    const preview = msg.text ? msg.text.substring(0, 100) + (msg.text.length > 100 ? '…' : '') : `📎 ${msg.file.name}`;
+    li.innerHTML = `
+      <div class="pinned-meta"><strong>${msg.senderName}</strong> <span class="time">${msg.time}</span></div>
+      <div class="pinned-text">${preview}</div>
+    `;
+    li.addEventListener('click', () => {
+      const msgEl = document.getElementById(`msg-${msg.id}`);
+      if (msgEl) { msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' }); msgEl.classList.add('highlight-msg'); setTimeout(() => msgEl.classList.remove('highlight-msg'), 2000); }
+      closeSearchPanel();
+    });
+    el.searchResults.appendChild(li);
+  });
 }
 
 /* ──────────────────────────────────────────────
@@ -838,6 +1029,21 @@ function connectGuest(targetId, name, guestAvatar, isNewJoin = false) {
       else if (payload.type === 'user_kicked') {
         handleUserKicked(payload.data);
       }
+      else if (payload.type === 'full_history') {
+        srvObj.history = payload.data;
+        saveState();
+        if (activeServerId === targetId) renderMessages();
+      }
+      else if (payload.type === 'pin_update') {
+        srvObj.pinned = payload.data;
+        saveState();
+        if (activeServerId === targetId) renderPinnedPanel();
+      }
+      else if (payload.type === 'sys_msg') {
+        if (activeServerId === targetId) {
+          appendSysMsg(payload.data);
+        }
+      }
     });
 
     conn.on('close', () => {
@@ -1000,26 +1206,27 @@ el.btnAuthAction.addEventListener('click', () => {
 // Leave Server
 el.btnLeaveServer.addEventListener('click', () => {
   if (!activeServerId) return;
-  if (!confirm('Leave this server permanently?')) return;
   
-  const net = activeConnections[activeServerId];
-  if (net) {
-    if (net.peer) net.peer.destroy();
-    delete activeConnections[activeServerId];
-  }
-  
-  delete savedServers[activeServerId];
-  saveState();
-  
-  // Pick another server to view if any exist
-  const remaining = Object.keys(savedServers);
-  if (remaining.length > 0) {
-    activeServerId = remaining[0];
-    activeChannelId = 'general';
-  } else {
-    activeServerId = null;
-  }
-  renderApp();
+  showCustomConfirm('Leave Server', 'Leave this server permanently?', 'Leave', true, () => {
+    const net = activeConnections[activeServerId];
+    if (net) {
+      if (net.peer) net.peer.destroy();
+      delete activeConnections[activeServerId];
+    }
+    
+    delete savedServers[activeServerId];
+    saveState();
+    
+    // Pick another server to view if any exist
+    const remaining = Object.keys(savedServers);
+    if (remaining.length > 0) {
+      activeServerId = remaining[0];
+      activeChannelId = 'general';
+    } else {
+      activeServerId = null;
+    }
+    renderApp();
+  });
 });
 
 // Create Channel
@@ -1041,6 +1248,7 @@ el.btnConfirmCreateChannel.addEventListener('click', () => {
   if (!name) { showErrorToast('Enter a channel name'); return; }
   
   const formatted = name.replace(/\s+/g, '-').toLowerCase();
+  const desc = el.newChannelDesc ? el.newChannelDesc.value.trim() : '';
   
   // check if exists
   if (srv.channels.find(c => c.id === formatted)) {
@@ -1048,13 +1256,14 @@ el.btnConfirmCreateChannel.addEventListener('click', () => {
     return;
   }
 
-  srv.channels.push({ id: formatted, name: formatted });
+  srv.channels.push({ id: formatted, name: formatted, desc });
   saveState();
   
   broadcast(srv.id, 'channel_update', srv.channels);
   
   el.modalCreateChannel.classList.remove('active');
   el.newChannelName.value = '';
+  if (el.newChannelDesc) el.newChannelDesc.value = '';
   renderApp();
 });
 
@@ -1198,3 +1407,55 @@ if (Object.keys(savedServers).length > 0) {
   activeServerId = Object.keys(savedServers)[0]; // select first server
 }
 renderApp();
+
+/* ── Search & Pinned Panel Event Listeners ── */
+el.btnSearch?.addEventListener('click', openSearchPanel);
+el.btnCloseSearch?.addEventListener('click', closeSearchPanel);
+el.searchInput?.addEventListener('input', (e) => renderSearchResults(e.target.value));
+
+el.btnPinned?.addEventListener('click', openPinnedPanel);
+el.btnClosePinned?.addEventListener('click', closePinnedPanel);
+
+// Close panels on overlay click
+el.searchPanel?.addEventListener('click', (e) => { if (e.target === el.searchPanel) closeSearchPanel(); });
+el.pinnedPanel?.addEventListener('click', (e) => { if (e.target === el.pinnedPanel) closePinnedPanel(); });
+
+// Close channel modal also clears description
+el.btnCloseChannelModal?.removeEventListener('click', () => {});
+el.btnCloseChannelModal?.addEventListener('click', () => {
+  el.modalCreateChannel.classList.remove('active');
+  el.newChannelName.value = '';
+  if (el.newChannelDesc) el.newChannelDesc.value = '';
+});
+
+/* ── Custom Confirm Modal ── */
+function showCustomConfirm(title, message, okText, isDestructive, onConfirm) {
+  const modal = document.getElementById('modal-confirm');
+  if (!modal) {
+    if (confirm(message)) onConfirm();
+    return;
+  }
+  document.getElementById('confirm-title').textContent = title;
+  document.getElementById('confirm-message').textContent = message;
+  const okBtn = document.getElementById('btn-confirm-ok');
+  okBtn.textContent = okText;
+  okBtn.style.background = isDestructive ? 'var(--red)' : 'var(--accent)';
+  
+  const cancelBtn = document.getElementById('btn-confirm-cancel');
+  
+  modal.classList.add('active');
+  
+  const closeConfirm = () => {
+    modal.classList.remove('active');
+    okBtn.removeEventListener('click', handleOk);
+    cancelBtn.removeEventListener('click', closeConfirm);
+  };
+  
+  const handleOk = () => {
+    closeConfirm();
+    onConfirm();
+  };
+  
+  okBtn.addEventListener('click', handleOk);
+  cancelBtn.addEventListener('click', closeConfirm);
+}
