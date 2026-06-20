@@ -9,13 +9,13 @@
   <!-- Montserrat -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700;900&family=Inter:wght@400;500;700;900&family=Roboto:wght@400;500;700;900&family=Open+Sans:wght@400;600;700;800&family=Lora:ital,wght@0,400;0,700;1,400&family=Merriweather:wght@400;700;900&family=Playfair+Display:wght@400;700;900&family=Fira+Code:wght@400;700&family=Comic+Neue:wght@400;700&family=Pacifico&display=swap" rel="stylesheet">
 
   <!-- Phosphor Icons -->
   <script src="https://unpkg.com/@phosphor-icons/web"></script>
   <!-- PeerJS -->
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=16">
 
   <!-- Theme Initialization (Prevents FOUC) -->
   <script>
@@ -127,7 +127,10 @@
         </div>
 
         <div class="emoji-picker" id="emoji-picker"></div>
-
+        <div id="staging-area" style="display:none; flex-direction:column; background:var(--glass2); padding:8px 12px; border-radius:var(--r-md); margin-bottom:10px; border:1px solid var(--border); gap:6px;">
+          <div id="staged-files-list" style="display:flex; flex-direction:column; gap:4px; max-height:130px; overflow-y:auto;"></div>
+          <div style="font-size:11px; color:var(--muted); text-align:right;" id="staged-count-label">0 / 5 files</div>
+        </div>
         <form id="chat-form">
           <button type="button" class="form-icon" id="btn-emoji" title="Emojis"><i class="ph ph-smiley"></i></button>
           <button type="button" class="form-icon" id="btn-attach" title="Attach file"><i class="ph ph-paperclip"></i></button>
@@ -151,9 +154,12 @@
           <!-- Members injected here -->
         </ul>
       </div>
-      <div class="panel-footer my-user-footer">
-        <div class="my-av" id="my-av-initial">?</div>
-        <span class="my-name" id="my-username-display">User</span>
+      <div class="panel-footer my-user-footer" style="display:flex; align-items:center; justify-content:space-between;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div class="my-av" id="my-av-initial">?</div>
+          <span class="my-name" id="my-username-display" style="max-width:100px; overflow:hidden; text-overflow:ellipsis; font-weight:700;">User</span>
+        </div>
+        <button id="btn-settings" title="Settings" style="background: transparent; border: none; font-size: 22px; color: var(--muted); cursor: pointer; transition: color var(--ease);"><i class="ph ph-gear"></i></button>
       </div>
     </aside>
 
@@ -269,6 +275,75 @@
     </div>
   </div>
 
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="modal-settings">
+    <div class="glass-modal" style="max-width: 400px;">
+      <div class="modal-header" style="padding-bottom: 0;">
+        <h2 class="form-title" style="font-size: 20px;">Settings</h2>
+        <button class="modal-close" id="btn-close-settings"><i class="ph ph-x"></i></button>
+      </div>
+      <div class="modal-body" style="padding-top: 20px; display: flex; flex-direction: column; gap: 20px;">
+        
+        <div class="field">
+          <label class="field-label">Username</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" class="inp" id="inp-setting-username" placeholder="New Username" maxlength="32">
+            <button class="btn-main" id="btn-save-username" style="width: auto; padding: 0 16px;">Save</button>
+          </div>
+        </div>
+
+        <div class="field" id="settings-server-name-group">
+          <label class="field-label">Server Name (Host Only)</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" class="inp" id="inp-setting-server-name" placeholder="Server Name" maxlength="32">
+            <button class="btn-main" id="btn-save-server-name" style="width: auto; padding: 0 16px;">Save</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="field-label">Max Storage Allocation (<span id="storage-val-display">10MB</span>)</label>
+          <input type="range" id="inp-setting-storage" min="10" max="50000" step="10" value="10" style="width:100%; margin-top:8px;">
+          <p style="font-size: 11px; color: var(--muted); margin-top: 6px;">Controls maximum file size allowed in the app. Warning: Extremely large files may crash the browser tab!</p>
+        </div>
+
+        <div class="field">
+          <label class="field-label">Chat Font</label>
+          <select id="inp-setting-font" class="inp" style="appearance: auto; padding: 12px 16px;">
+            <option value="'Montserrat', sans-serif">Montserrat</option>
+            <option value="'Inter', sans-serif">Inter</option>
+            <option value="'Roboto', sans-serif">Roboto</option>
+            <option value="'Open Sans', sans-serif">Open Sans</option>
+            <option value="'Lora', serif">Lora</option>
+            <option value="'Merriweather', serif">Merriweather</option>
+            <option value="'Playfair Display', serif">Playfair Display</option>
+            <option value="'Fira Code', monospace">Fira Code</option>
+            <option value="'Comic Neue', cursive">Comic Neue</option>
+            <option value="'Pacifico', cursive">Pacifico</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label class="field-label">Chat Font Size (<span id="fontsize-val-display">14px</span>)</label>
+          <input type="range" id="inp-setting-fontsize" min="10" max="32" step="1" value="14" style="width:100%; margin-top:8px;">
+        </div>
+
+        <div style="border-top: 1px solid var(--border); padding-top: 20px;">
+          <button class="btn-main" id="btn-setting-leave" style="background: var(--red);">Leave Server</button>
+        </div>
+
+        <div style="border-top: 1px solid var(--border); padding-top: 20px;">
+          <label class="field-label" style="color: var(--red);">⚠️ Danger Zone — Delete All Data</label>
+          <p style="font-size: 12px; color: var(--muted); margin: 6px 0 12px;">This will permanently erase all servers, messages, and settings. Type your username to confirm.</p>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" class="inp" id="inp-delete-confirm" placeholder="Type your username..." maxlength="32">
+            <button class="btn-main" id="btn-delete-data" style="width: auto; padding: 0 16px; background: var(--red);">Delete</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
   <!-- Create Channel Modal -->
   <div class="modal-overlay" id="modal-create-channel">
     <div class="glass-modal" style="max-width: 360px;">
@@ -324,6 +399,8 @@
     </div>
   </div>
 
-  <script src="app.js?v=5"></script>
+  <!-- Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.4.7/dist/peerjs.min.js"></script>
+  <script src="app.js?v=16"></script>
 </body>
 </html>

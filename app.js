@@ -3,6 +3,12 @@
    Multi-server, multi-channel logic.
 ═══════════════════════════════════════════════════════════════ */
 
+// Initialize Font Preferences
+const savedFont = localStorage.getItem('chatFont') || "'Montserrat', sans-serif";
+const savedFontSize = localStorage.getItem('chatFontSize') || "14";
+document.documentElement.style.setProperty('--font', savedFont);
+document.documentElement.style.setProperty('--msg-size', `${savedFontSize}px`);
+
 /* ──────────────────────────────────────────────
    DOM Elements
 ────────────────────────────────────────────── */
@@ -94,7 +100,30 @@ const el = {
   // Image Viewer
   imageViewer: document.getElementById('image-viewer'),
   imageViewerImg: document.getElementById('image-viewer-img'),
-  btnCloseViewer: document.getElementById('btn-close-viewer')
+  btnCloseViewer: document.getElementById('btn-close-viewer'),
+
+  // Settings
+  btnSettings: document.getElementById('btn-settings'),
+  modalSettings: document.getElementById('modal-settings'),
+  btnCloseSettings: document.getElementById('btn-close-settings'),
+  inpSettingUsername: document.getElementById('inp-setting-username'),
+  btnSaveUsername: document.getElementById('btn-save-username'),
+  settingsServerNameGroup: document.getElementById('settings-server-name-group'),
+  inpSettingServerName: document.getElementById('inp-setting-server-name'),
+  btnSaveServerName: document.getElementById('btn-save-server-name'),
+  inpSettingStorage: document.getElementById('inp-setting-storage'),
+  storageValDisplay: document.getElementById('storage-val-display'),
+  inpSettingFont: document.getElementById('inp-setting-font'),
+  inpSettingFontSize: document.getElementById('inp-setting-fontsize'),
+  fontSizeDisplay: document.getElementById('fontsize-val-display'),
+  btnSettingLeave: document.getElementById('btn-setting-leave'),
+  inpDeleteConfirm: document.getElementById('inp-delete-confirm'),
+  btnDeleteData: document.getElementById('btn-delete-data'),
+
+  // Staging
+  stagingArea: document.getElementById('staging-area'),
+  stagingFilename: document.getElementById('staging-filename'),
+  btnRemoveStaged: document.getElementById('btn-remove-staged')
 };
 
 /* ──────────────────────────────────────────────
@@ -127,14 +156,27 @@ let activeConnections = {};
 let isJoinMode = false;
 let pendingUndo = null;
 let undoTimer = null;
+let stagedFiles = []; // up to 5 files queued for sending
 
-const EMOJIS = [
-  '😀','😂','🤣','😊','😍','🥰','😎','🤓','😭','😤',
-  '👍','👎','🙌','👏','🤝','💪','🔥','✨','🎉','💯',
-  '❤️','💔','👀','🧠','💀','👽','🚀','🛸','🌍','🌙',
-  '🍔','🍕','☕','🍺','🎮','💻','📱','💡','💰','💎'
-];
-const MAX_FILE = 10 * 1024 * 1024;
+const EMOJIS = (() => {
+  const ranges = [
+    [0x1F600, 0x1F64F], // Emoticons
+    [0x1F300, 0x1F5FF], // Misc Symbols & Pictographs
+    [0x1F680, 0x1F6FF], // Transport & Map
+    [0x1F900, 0x1F9FF], // Supplemental
+    [0x1FA70, 0x1FAFF], // Symbols and Pictographs Ext-A
+    [0x2600, 0x26FF],   // Misc symbols
+    [0x2700, 0x27BF],   // Dingbats
+  ];
+  let arr = [];
+  for (const [start, end] of ranges) {
+    for (let i = start; i <= end; i++) {
+      arr.push(String.fromCodePoint(i));
+    }
+  }
+  return arr;
+})();
+let MAX_FILE = parseInt(localStorage.getItem('maxStorageMB') || '10') * 1024 * 1024;
 const UNDO_MS = 5000;
 
 /* ──────────────────────────────────────────────
@@ -149,8 +191,36 @@ function ts() {
   return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
 function saveState() {
-  localStorage.setItem('webmsg_servers', JSON.stringify(savedServers));
+  // IMPORTANT: Strip file data (base64) from history before saving to localStorage
+  // to avoid hitting the 5-10MB quota limit. File data lives only in fileCache.
+  const stripped = {};
+  for (const [id, srv] of Object.entries(savedServers)) {
+    stripped[id] = {
+      ...srv,
+      history: srv.history.map(m => {
+        if (!m.file) return m;
+        return { ...m, file: { ...m.file, data: null } }; // keep metadata, drop blob
+      })
+    };
+  }
+  try {
+    localStorage.setItem('webmsg_servers', JSON.stringify(stripped));
+  } catch (e) {
+    console.warn('localStorage quota exceeded, clearing old history to recover.');
+    // Emergency: clear oldest messages
+    for (const srv of Object.values(savedServers)) {
+      if (srv.history.length > 50) srv.history = srv.history.slice(-50);
+    }
+    try { localStorage.setItem('webmsg_servers', JSON.stringify(stripped)); } catch(_) {}
+  }
 }
+
+// In-memory file cache: fileId -> base64 data URL
+// Files are never persisted to localStorage – they live only for the session.
+const fileCache = {};
+
+function storeFile(fileId, data) { fileCache[fileId] = data; }
+function getFile(fileId) { return fileCache[fileId] || null; }
 function getActiveSrv() { return savedServers[activeServerId]; }
 function getActiveNet() { return activeConnections[activeServerId]; }
 
@@ -538,8 +608,18 @@ function appendMessageNode(msg) {
 
   const isSelf = msg.senderName === srv.username; // simplistic check
 
+  let isClustered = false;
+  const lastEl = el.messageFeed.lastElementChild;
+  if (lastEl && lastEl.classList.contains('msg-item')) {
+    const lastName = lastEl.querySelector('.msg-meta .name')?.textContent;
+    const lastTime = lastEl.querySelector('.msg-meta .time')?.textContent;
+    if (lastName === msg.senderName && lastTime === msg.time) {
+      isClustered = true;
+    }
+  }
+
   const wrap = document.createElement('div');
-  wrap.className = `msg-item ${isSelf ? 'is-self' : ''} ${msg.isHost ? 'is-host' : ''}`;
+  wrap.className = `msg-item ${isSelf ? 'is-self' : ''} ${msg.isHost ? 'is-host' : ''} ${isClustered ? 'is-clustered' : ''}`;
   wrap.id = `msg-${msg.id}`;
 
   // Replace crown emoji with badge in member list
@@ -558,33 +638,41 @@ function appendMessageNode(msg) {
 
   let attachHtml = '';
   if (msg.file) {
-    if (msg.file.mime.startsWith('image/')) {
-      attachHtml = `<div class="msg-attachment"><img src="${msg.file.data}" alt="${msg.file.name}" class="chat-img" data-src="${msg.file.data}"></div>`;
+    // Resolve actual file data: live data > fileCache > null (page was reloaded)
+    const fileData = msg.file.data || getFile(msg.file.fileId) || null;
+    if (msg.file.mime && msg.file.mime.startsWith('image/')) {
+      if (fileData) {
+        attachHtml = `<div class="msg-attachment"><img src="${fileData}" alt="${msg.file.name}" class="chat-img" data-src="${fileData}"></div>`;
+      } else {
+        attachHtml = `<div class="msg-attachment"><div class="file-card"><div class="fc-info"><div class="fc-icon"><i class="ph ph-image-broken"></i></div><div class="fc-details"><span class="fc-name">${msg.file.name}</span><span class="fc-size" style="color:var(--red)">Unavailable after reload</span></div></div></div></div>`;
+      }
     } else {
       let icon = 'ph-file';
       if (msg.file.name.endsWith('.zip')) icon = 'ph-file-zip';
       if (msg.file.name.endsWith('.txt')) icon = 'ph-file-text';
       if (msg.file.name.endsWith('.pdf')) icon = 'ph-file-pdf';
-      
-      // Calculate a rough size based on base64 data length
-      const sizeBytes = Math.round((msg.file.data.length - 22) * 0.75); 
-      const sizeStr = formatBytes(sizeBytes);
 
-      attachHtml = `
-        <div class="msg-attachment">
-          <div class="file-card">
-            <div class="fc-info">
-              <div class="fc-icon"><i class="ph ${icon}"></i></div>
-              <div class="fc-details">
-                <span class="fc-name" title="${msg.file.name}">${msg.file.name}</span>
-                <span class="fc-size">${sizeStr}</span>
+      if (fileData) {
+        const sizeBytes = Math.round((fileData.length - 22) * 0.75);
+        const sizeStr = formatBytes(sizeBytes);
+        attachHtml = `
+          <div class="msg-attachment">
+            <div class="file-card">
+              <div class="fc-info">
+                <div class="fc-icon"><i class="ph ${icon}"></i></div>
+                <div class="fc-details">
+                  <span class="fc-name" title="${msg.file.name}">${msg.file.name}</span>
+                  <span class="fc-size">${sizeStr}</span>
+                </div>
               </div>
+              <a href="${fileData}" download="${msg.file.name}" class="fc-download" title="Download">
+                <i class="ph ph-download-simple"></i>
+              </a>
             </div>
-            <a href="${msg.file.data}" download="${msg.file.name}" class="fc-download" title="Download">
-              <i class="ph ph-download-simple"></i>
-            </a>
-          </div>
-        </div>`;
+          </div>`;
+      } else {
+        attachHtml = `<div class="msg-attachment"><div class="file-card"><div class="fc-info"><div class="fc-icon"><i class="ph ${icon}"></i></div><div class="fc-details"><span class="fc-name">${msg.file.name}</span><span class="fc-size" style="color:var(--red)">Unavailable after reload</span></div></div></div></div>`;
+      }
     }
   }
 
@@ -592,6 +680,11 @@ function appendMessageNode(msg) {
   let isPinged = false;
   if (parsedText) {
     parsedText = parsedText.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    
+    // Parse Links
+    const urlRegex = /(https?:\/\/[^\s]+)/gi;
+    parsedText = parsedText.replace(urlRegex, url => `<a href="${url}" target="_blank" class="msg-link">${url}</a>`);
+    
     const pingRegex = /@([a-zA-Z0-9_\s]+?)(?=\s|$|<)/g;
     parsedText = parsedText.replace(/@([a-zA-Z0-9_]+)/g, (match, username) => {
       if (username.toLowerCase() === srv.username.toLowerCase() || username.toLowerCase() === 'everyone') isPinged = true;
@@ -601,6 +694,31 @@ function appendMessageNode(msg) {
   }
   
   const textHtml = parsedText ? `<div class="msg-bubble">${parsedText}</div>` : '';
+  
+  if (isClustered) {
+    const bubble = lastEl.querySelector('.msg-bubble');
+    const msgBody = lastEl.querySelector('.msg-body');
+    
+    if (bubble && parsedText) {
+      const line = document.createElement('div');
+      line.id = `msg-${msg.id}`; // store ID so delete works if triggered externally
+      line.style.marginTop = '4px';
+      line.innerHTML = parsedText;
+      bubble.appendChild(line);
+    } else if (!bubble && parsedText && msgBody) {
+      // If previous msg had no text bubble (only attachment), create one
+      msgBody.insertAdjacentHTML('beforeend', textHtml);
+      const newBubble = msgBody.querySelector('.msg-bubble');
+      newBubble.id = `msg-${msg.id}`;
+    }
+    
+    if (attachHtml && msgBody) {
+      msgBody.insertAdjacentHTML('beforeend', attachHtml);
+    }
+    
+    el.messageFeed.scrollTo({ top: el.messageFeed.scrollHeight, behavior: 'smooth' });
+    return; // skip appending new wrapper
+  }
   
   const canDelete = true; // Everyone can delete for me or kick
   const actionsHtml = canDelete
@@ -852,10 +970,47 @@ function renderSearchResults(query) {
 /* ──────────────────────────────────────────────
    Network Logic
 ────────────────────────────────────────────── */
+// Chunk size: 48KB (safe for all browsers' SCTP data channel limits)
+const CHUNK_SIZE = 48 * 1024;
+
+function sendChunked(conn, payload) {
+  const str = JSON.stringify(payload);
+  if (str.length <= CHUNK_SIZE) {
+    conn.send(payload);
+    return;
+  }
+  // Chunk the JSON string
+  const totalChunks = Math.ceil(str.length / CHUNK_SIZE);
+  const chunkId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  for (let i = 0; i < totalChunks; i++) {
+    const slice = str.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    conn.send({ __chunk: true, id: chunkId, index: i, total: totalChunks, slice });
+  }
+}
+
+// Per-connection chunk reassembly buffers
+const chunkBuffers = {};
+
+function handleIncoming(rawPayload, conn, handler) {
+  if (rawPayload && rawPayload.__chunk) {
+    const { id, index, total, slice } = rawPayload;
+    if (!chunkBuffers[id]) chunkBuffers[id] = { parts: [], received: 0, total };
+    chunkBuffers[id].parts[index] = slice;
+    chunkBuffers[id].received++;
+    if (chunkBuffers[id].received === total) {
+      const full = JSON.parse(chunkBuffers[id].parts.join(''));
+      delete chunkBuffers[id];
+      handler(full, conn);
+    }
+    return;
+  }
+  handler(rawPayload, conn);
+}
+
 function broadcast(roomId, type, data) {
   const net = activeConnections[roomId];
   if (!net) return;
-  net.connections.forEach(c => { if (c.open) c.send({ type, data }); });
+  net.connections.forEach(c => { if (c.open) sendChunked(c, { type, data }); });
 }
 
 function connectHost(roomId, name) {
@@ -871,59 +1026,66 @@ function connectHost(roomId, name) {
   peer.on('connection', conn => {
     let guestName = 'Guest';
     
-    conn.on('data', payload => {
-      const srvObj = savedServers[roomId];
-      if (!srvObj) return; // Server was deleted
+    conn.on('data', rawPayload => {
+      handleIncoming(rawPayload, conn, (payload) => {
+        const srvObj = savedServers[roomId];
+        if (!srvObj) return;
 
-      if (payload.type === 'join') {
-        guestName = payload.name;
-      // When a guest joins, assign role member
-      srvObj.members.push({ id: conn.peer, name: guestName, isHost: false, avatar: payload.avatar || null, role: 'member' });
-
-        activeConnections[roomId].connections.push(conn);
-        saveState();
-        
-        // Sync full state to guest (including logo)
-        conn.send({ type: 'sync', history: srvObj.history, members: srvObj.members, channels: srvObj.channels, logo: srvObj.logo });
-        broadcast(roomId, 'member_list', srvObj.members);
-        
-        if (activeServerId === roomId) {
-          renderMembers();
-          appendSysMsg(`✦ @${guestName} joined the server.`);
-        }
-      } 
-      else if (payload.type === 'message') {
-        const msg = {
-          id: `${Date.now()}-${genId(4)}`,
-          channelId: payload.channelId,
-          senderId: conn.peer,
-          senderName: guestName,
-          text: payload.text || '',
-          time: ts(),
-          isHost: false,
-          file: payload.file || null,
-        };
-        srvObj.history.push(msg);
-        saveState();
-        
-        broadcast(roomId, 'new_message', msg);
-
-        if (activeServerId === roomId && activeChannelId === msg.channelId) {
-          appendMessageNode(msg);
-        }
-      } 
-      else if (payload.type === 'delete_req') {
-        const target = srvObj.history.find(m => m.id === payload.id);
-        if (target && target.senderId === conn.peer) {
-          srvObj.history = srvObj.history.filter(m => m.id !== payload.id);
+        if (payload.type === 'join') {
+          guestName = payload.name;
+          srvObj.members.push({ id: conn.peer, name: guestName, isHost: false, avatar: payload.avatar || null, role: 'member' });
+          activeConnections[roomId].connections.push(conn);
           saveState();
-          broadcast(roomId, 'delete_msg', { id: payload.id });
-          
+
+          // Sync state WITHOUT file blobs to avoid huge payloads
+          const safeHistory = srvObj.history.map(m => {
+            if (!m.file) return m;
+            return { ...m, file: { ...m.file, data: null } };
+          });
+          sendChunked(conn, { type: 'sync', history: safeHistory, members: srvObj.members, channels: srvObj.channels, logo: srvObj.logo });
+          broadcast(roomId, 'member_list', srvObj.members);
+
           if (activeServerId === roomId) {
-            document.getElementById(`msg-${payload.id}`)?.remove();
+            renderMembers();
+            appendSysMsg(`✦ @${guestName} joined the server.`);
           }
         }
-      }
+        else if (payload.type === 'message') {
+          const fileData = payload.file || null;
+          const fileId = fileData ? `${Date.now()}-file` : null;
+          if (fileData && fileData.data) {
+            storeFile(fileId, fileData.data); // cache blob in memory
+          }
+          const msg = {
+            id: `${Date.now()}-${genId(4)}`,
+            channelId: payload.channelId,
+            senderId: conn.peer,
+            senderName: guestName,
+            text: payload.text || '',
+            time: ts(),
+            isHost: false,
+            file: fileData ? { name: fileData.name, mime: fileData.mime, fileId, data: fileData.data } : null,
+          };
+          srvObj.history.push(msg);
+          saveState();
+
+          broadcast(roomId, 'new_message', msg);
+          if (activeServerId === roomId && activeChannelId === msg.channelId) {
+            appendMessageNode(msg);
+          }
+        }
+        else if (payload.type === 'delete_req') {
+          const target = srvObj.history.find(m => m.id === payload.id);
+          if (target && target.senderId === conn.peer) {
+            srvObj.history = srvObj.history.filter(m => m.id !== payload.id);
+            saveState();
+            broadcast(roomId, 'delete_msg', { id: payload.id });
+            if (activeServerId === roomId) {
+              document.getElementById(`msg-${payload.id}`)?.remove();
+            }
+          }
+        }
+      });
     });
 
     conn.on('close', () => {
@@ -981,69 +1143,75 @@ function connectGuest(targetId, name, guestAvatar, isNewJoin = false) {
       renderApp();
     });
 
-    conn.on('data', payload => {
-      const srvObj = savedServers[targetId];
-      if (!srvObj) return;
+    conn.on('data', rawPayload => {
+      handleIncoming(rawPayload, conn, (payload) => {
+        const srvObj = savedServers[targetId];
+        if (!srvObj) return;
 
-      if (payload.type === 'sync') {
-        srvObj.history = payload.history;
-        srvObj.members = payload.members;
-        srvObj.channels = payload.channels;
-        if (payload.logo) srvObj.logo = payload.logo;
-        saveState();
-        if (activeServerId === targetId) {
-          renderApp();
-          appendSysMsg(`✦ Connected to host.`);
-        }
-      }  
-      else if (payload.type === 'new_message') {
-        srvObj.history.push(payload.data);
-        saveState();
-        if (activeServerId === targetId && activeChannelId === payload.data.channelId) {
-          appendMessageNode(payload.data);
-        }
-      } 
-      else if (payload.type === 'member_list') {
-        srvObj.members = payload.data;
-        saveState();
-        if (activeServerId === targetId) renderMembers();
-      } 
-      else if (payload.type === 'delete_msg') {
-        srvObj.history = srvObj.history.filter(m => m.id !== payload.data.id);
-        saveState();
-        if (activeServerId === targetId) {
-          document.getElementById(`msg-${payload.data.id}`)?.remove();
-        }
-      }
-      else if (payload.type === 'channel_update') {
-        srvObj.channels = payload.data;
-        saveState();
-        if (activeServerId === targetId) {
-          // If we are in a channel that was deleted, fallback to general
-          if (!srvObj.channels.find(c => c.id === activeChannelId)) {
-            activeChannelId = 'general';
+        if (payload.type === 'sync') {
+          srvObj.history = payload.history;
+          srvObj.members = payload.members;
+          srvObj.channels = payload.channels;
+          if (payload.logo) srvObj.logo = payload.logo;
+          saveState();
+          if (activeServerId === targetId) {
+            renderApp();
+            appendSysMsg(`✦ Connected to host.`);
           }
-          renderApp();
         }
-      }
-      else if (payload.type === 'user_kicked') {
-        handleUserKicked(payload.data);
-      }
-      else if (payload.type === 'full_history') {
-        srvObj.history = payload.data;
-        saveState();
-        if (activeServerId === targetId) renderMessages();
-      }
-      else if (payload.type === 'pin_update') {
-        srvObj.pinned = payload.data;
-        saveState();
-        if (activeServerId === targetId) renderPinnedPanel();
-      }
-      else if (payload.type === 'sys_msg') {
-        if (activeServerId === targetId) {
-          appendSysMsg(payload.data);
+        else if (payload.type === 'new_message') {
+          const msg = payload.data;
+          // Cache incoming file blobs in memory (never saved to localStorage)
+          if (msg.file && msg.file.data) {
+            storeFile(msg.file.fileId || msg.id, msg.file.data);
+          }
+          srvObj.history.push(msg);
+          saveState();
+          if (activeServerId === targetId && activeChannelId === msg.channelId) {
+            appendMessageNode(msg);
+          }
         }
-      }
+        else if (payload.type === 'member_list') {
+          srvObj.members = payload.data;
+          saveState();
+          if (activeServerId === targetId) renderMembers();
+        }
+        else if (payload.type === 'delete_msg') {
+          srvObj.history = srvObj.history.filter(m => m.id !== payload.data.id);
+          saveState();
+          if (activeServerId === targetId) {
+            document.getElementById(`msg-${payload.data.id}`)?.remove();
+          }
+        }
+        else if (payload.type === 'channel_update') {
+          srvObj.channels = payload.data;
+          saveState();
+          if (activeServerId === targetId) {
+            if (!srvObj.channels.find(c => c.id === activeChannelId)) {
+              activeChannelId = 'general';
+            }
+            renderApp();
+          }
+        }
+        else if (payload.type === 'user_kicked') {
+          handleUserKicked(payload.data);
+        }
+        else if (payload.type === 'full_history') {
+          srvObj.history = payload.data;
+          saveState();
+          if (activeServerId === targetId) renderMessages();
+        }
+        else if (payload.type === 'pin_update') {
+          srvObj.pinned = payload.data;
+          saveState();
+          if (activeServerId === targetId) renderPinnedPanel();
+        }
+        else if (payload.type === 'sys_msg') {
+          if (activeServerId === targetId) {
+            appendSysMsg(payload.data);
+          }
+        }
+      });
     });
 
     conn.on('close', () => {
@@ -1203,21 +1371,17 @@ el.btnAuthAction.addEventListener('click', () => {
   renderApp();
 });
 
-// Leave Server
-el.btnLeaveServer.addEventListener('click', () => {
+// Leave Server (reusable function)
+function leaveServer() {
   if (!activeServerId) return;
-  
   showCustomConfirm('Leave Server', 'Leave this server permanently?', 'Leave', true, () => {
     const net = activeConnections[activeServerId];
     if (net) {
       if (net.peer) net.peer.destroy();
       delete activeConnections[activeServerId];
     }
-    
     delete savedServers[activeServerId];
     saveState();
-    
-    // Pick another server to view if any exist
     const remaining = Object.keys(savedServers);
     if (remaining.length > 0) {
       activeServerId = remaining[0];
@@ -1227,7 +1391,9 @@ el.btnLeaveServer.addEventListener('click', () => {
     }
     renderApp();
   });
-});
+}
+
+el.btnLeaveServer.addEventListener('click', () => leaveServer());
 
 // Create Channel
 el.btnCreateChannel.addEventListener('click', () => {
@@ -1292,13 +1458,18 @@ function sendMsg(text, fileData = null) {
   const srv = getActiveSrv();
   if (!srv) return;
 
+  // Cache file blob in memory
+  const fileId = fileData ? `${Date.now()}-file` : null;
+  if (fileData && fileData.data) storeFile(fileId, fileData.data);
+  const filePayload = fileData ? { ...fileData, fileId } : null;
+
   if (srv.isHost) {
     const msg = {
       id: `${Date.now()}-${genId(4)}`,
       channelId: activeChannelId,
-      senderId: 'host', // self
+      senderId: 'host',
       senderName: srv.username,
-      text, time: ts(), isHost: true, file: fileData
+      text, time: ts(), isHost: true, file: filePayload
     };
     srv.history.push(msg);
     saveState();
@@ -1307,7 +1478,9 @@ function sendMsg(text, fileData = null) {
   } else {
     const net = getActiveNet();
     if (net && net.connections[0]?.open) {
-      net.connections[0].send({ type: 'message', channelId: activeChannelId, text, file: fileData });
+      sendChunked(net.connections[0], { type: 'message', channelId: activeChannelId, text, file: filePayload });
+    } else {
+      showErrorToast('Not connected to host. Please check your connection.');
     }
   }
 }
@@ -1315,17 +1488,81 @@ function sendMsg(text, fileData = null) {
 el.chatForm.addEventListener('submit', e => {
   e.preventDefault();
   const text = el.messageInput.value.trim();
-  if (!text) return;
-  sendMsg(text);
+  if (!text && stagedFiles.length === 0) return;
+
+  if (stagedFiles.length > 0) {
+    // Send text with first file, then each remaining file as its own message
+    sendMsg(text, stagedFiles[0]);
+    for (let i = 1; i < stagedFiles.length; i++) {
+      setTimeout(() => sendMsg('', stagedFiles[i]), i * 80);
+    }
+  } else {
+    sendMsg(text, null);
+  }
+
   el.messageInput.value = '';
+  stagedFiles = [];
+  renderStagingArea();
 });
 
-// File Upload
+// File staging helpers
+function renderStagingArea() {
+  const list = document.getElementById('staged-files-list');
+  const label = document.getElementById('staged-count-label');
+  if (!list) return;
+  list.innerHTML = '';
+  stagedFiles.forEach((f, idx) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;background:var(--glass);border:1px solid var(--border);border-radius:8px;padding:6px 10px;overflow:hidden;';
+    // Thumbnail or icon
+    if (f.mime && f.mime.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = f.data;
+      img.style.cssText = 'width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;';
+      row.appendChild(img);
+    } else {
+      const ic = document.createElement('i');
+      ic.className = 'ph ph-file-text';
+      ic.style.cssText = 'color:var(--accent);font-size:18px;flex-shrink:0;';
+      row.appendChild(ic);
+    }
+    // Name
+    const name = document.createElement('span');
+    name.textContent = f.name;
+    name.style.cssText = 'font-size:12px;font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    row.appendChild(name);
+    // Remove button
+    const rm = document.createElement('button');
+    rm.type = 'button';
+    rm.innerHTML = '<i class="ph ph-x"></i>';
+    rm.style.cssText = 'background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;flex-shrink:0;padding:2px;';
+    rm.addEventListener('click', () => { stagedFiles.splice(idx, 1); renderStagingArea(); });
+    row.appendChild(rm);
+    list.appendChild(row);
+  });
+  if (label) label.textContent = `${stagedFiles.length} / 5 files`;
+  el.stagingArea.style.display = stagedFiles.length > 0 ? 'flex' : 'none';
+}
+
+// File Upload & Staging
 el.btnAttach.addEventListener('click', () => el.fileInput.click());
 el.fileInput.addEventListener('change', e => {
   const file = e.target.files[0];
   if (!file) return;
-  if (file.size > MAX_FILE) { showErrorToast('Max file size is 10MB.'); el.fileInput.value = ''; return; }
+
+  if (stagedFiles.length >= 5) {
+    showErrorToast('Maximum 5 files allowed per message.');
+    el.fileInput.value = '';
+    return;
+  }
+
+  const currentMaxMB = parseInt(localStorage.getItem('maxStorageMB') || '10');
+  const maxBytes = currentMaxMB * 1024 * 1024;
+  if (file.size > maxBytes) {
+    showErrorToast(`Max file size is ${currentMaxMB}MB.`);
+    el.fileInput.value = '';
+    return;
+  }
 
   el.uploadContainer.classList.add('active');
   el.uploadFilename.textContent = file.name;
@@ -1344,7 +1581,8 @@ el.fileInput.addEventListener('change', e => {
     el.uploadFill.style.width = '100%';
     setTimeout(() => {
       el.uploadContainer.classList.remove('active');
-      sendMsg('', { name: file.name, mime: file.type, data: reader.result });
+      stagedFiles.push({ name: file.name, mime: file.type, data: reader.result });
+      renderStagingArea();
       el.fileInput.value = '';
     }, 400);
   };
@@ -1458,4 +1696,135 @@ function showCustomConfirm(title, message, okText, isDestructive, onConfirm) {
   
   okBtn.addEventListener('click', handleOk);
   cancelBtn.addEventListener('click', closeConfirm);
+}
+
+/* ── Settings Logic ── */
+if (el.btnSettings) {
+  el.btnSettings.addEventListener('click', () => {
+    const srv = getActiveSrv();
+    if (!srv) return;
+    
+    // Populate
+    el.inpSettingUsername.value = srv.username;
+    if (srv.isHost) {
+      el.settingsServerNameGroup.style.display = 'block';
+      el.inpSettingServerName.value = srv.name;
+    } else {
+      el.settingsServerNameGroup.style.display = 'none';
+    }
+    
+    const currentMaxMB = parseInt(localStorage.getItem('maxStorageMB') || '10');
+    el.inpSettingStorage.value = currentMaxMB;
+    el.storageValDisplay.textContent = currentMaxMB >= 1000 ? `${(currentMaxMB/1000).toFixed(1)}GB` : `${currentMaxMB}MB`;
+
+    if (el.inpSettingFont) el.inpSettingFont.value = localStorage.getItem('chatFont') || "'Montserrat', sans-serif";
+    if (el.inpSettingFontSize) {
+      const fs = localStorage.getItem('chatFontSize') || "14";
+      el.inpSettingFontSize.value = fs;
+      if (el.fontSizeDisplay) el.fontSizeDisplay.textContent = `${fs}px`;
+    }
+    
+    el.modalSettings.classList.add('active');
+  });
+}
+
+if (el.btnCloseSettings) {
+  el.btnCloseSettings.addEventListener('click', () => {
+    el.modalSettings.classList.remove('active');
+  });
+}
+
+if (el.btnSaveUsername) {
+  el.btnSaveUsername.addEventListener('click', () => {
+    const srv = getActiveSrv();
+    const newName = el.inpSettingUsername.value.trim();
+    if (!srv || !newName || newName === srv.username) return;
+    srv.username = newName;
+    saveState();
+    el.myUsername.textContent = newName;
+    el.myAvInitial.textContent = newName.charAt(0).toUpperCase();
+    if (!srv.isHost) {
+      const net = getActiveNet();
+      if (net && net.connections[0]?.open) {
+        net.connections[0].send({ type: 'rename', name: newName });
+      }
+    } else {
+      broadcast(srv.id, 'channel_update', srv.channels); // Force UI update
+    }
+    el.modalSettings.classList.remove('active');
+  });
+}
+
+if (el.btnSaveServerName) {
+  el.btnSaveServerName.addEventListener('click', () => {
+    const srv = getActiveSrv();
+    const newName = el.inpSettingServerName.value.trim();
+    if (!srv || !srv.isHost || !newName || newName === srv.name) return;
+    srv.name = newName;
+    saveState();
+    const serverNameEl = document.getElementById('current-server-name');
+    if (serverNameEl) serverNameEl.textContent = newName;
+    broadcast(srv.id, 'channel_update', srv.channels);
+    el.modalSettings.classList.remove('active');
+  });
+}
+
+if (el.inpSettingStorage) {
+  el.inpSettingStorage.addEventListener('input', (e) => {
+    const val = parseInt(e.target.value);
+    el.storageValDisplay.textContent = val >= 1000 ? `${(val/1000).toFixed(1)}GB` : `${val}MB`;
+  });
+  el.inpSettingStorage.addEventListener('change', (e) => {
+    const val = parseInt(e.target.value);
+    localStorage.setItem('maxStorageMB', val.toString());
+    MAX_FILE = val * 1024 * 1024;
+  });
+}
+
+if (el.inpSettingFont) {
+  el.inpSettingFont.addEventListener('change', (e) => {
+    const val = e.target.value;
+    localStorage.setItem('chatFont', val);
+    document.documentElement.style.setProperty('--font', val);
+  });
+}
+
+if (el.inpSettingFontSize) {
+  el.inpSettingFontSize.addEventListener('input', (e) => {
+    const val = e.target.value;
+    if (el.fontSizeDisplay) el.fontSizeDisplay.textContent = `${val}px`;
+    document.documentElement.style.setProperty('--msg-size', `${val}px`);
+  });
+  el.inpSettingFontSize.addEventListener('change', (e) => {
+    localStorage.setItem('chatFontSize', e.target.value);
+  });
+}
+
+if (el.btnSettingLeave) {
+  el.btnSettingLeave.addEventListener('click', () => {
+    el.modalSettings.classList.remove('active');
+    leaveServer();
+  });
+}
+
+if (el.btnDeleteData && el.inpDeleteConfirm) {
+  el.btnDeleteData.addEventListener('click', () => {
+    const srv = getActiveSrv();
+    const typed = el.inpDeleteConfirm.value.trim();
+    if (!srv || !typed) return;
+    
+    if (typed !== srv.username) {
+      showErrorToast("Username doesn't match!");
+      return;
+    }
+    
+    // Wipe everything
+    localStorage.clear();
+    Object.keys(activeConnections).forEach(k => {
+      if (activeConnections[k] && activeConnections[k].peer) {
+        activeConnections[k].peer.destroy();
+      }
+    });
+    location.reload();
+  });
 }
