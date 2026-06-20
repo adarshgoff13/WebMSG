@@ -215,12 +215,33 @@ function saveState() {
   }
 }
 
-// In-memory file cache: fileId -> base64 data URL
-// Files are never persisted to localStorage – they live only for the session.
-const fileCache = {};
+// IndexedDB File Cache (Survives Reloads)
+const DB_NAME = 'WebMSGFiles';
+const STORE_NAME = 'files';
+const dbPromise = new Promise((resolve, reject) => {
+  const req = indexedDB.open(DB_NAME, 1);
+  req.onupgradeneeded = e => e.target.result.createObjectStore(STORE_NAME);
+  req.onsuccess = e => resolve(e.target.result);
+  req.onerror = e => reject(e);
+});
 
-function storeFile(fileId, data) { fileCache[fileId] = data; }
-function getFile(fileId) { return fileCache[fileId] || null; }
+async function storeFile(fileId, data) {
+  if (!fileId || !data) return;
+  const db = await dbPromise;
+  const tx = db.transaction(STORE_NAME, 'readwrite');
+  tx.objectStore(STORE_NAME).put(data, fileId);
+}
+
+async function getFile(fileId) {
+  if (!fileId) return null;
+  const db = await dbPromise;
+  return new Promise(resolve => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).get(fileId);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+  });
+}
 function getActiveSrv() { return savedServers[activeServerId]; }
 function getActiveNet() { return activeConnections[activeServerId]; }
 
@@ -542,31 +563,30 @@ function onMouseMove(e) {
 }
 function onMouseUp() { imageViewerState.isPanning = false; }
 
-// Add UI controls to image viewer (slider)
-document.addEventListener('DOMContentLoaded', () => {
-  el.zoomSlider = document.getElementById('zoom-slider');
-  if (el.zoomSlider) {
-    el.zoomSlider.addEventListener('input', (e) => {
-      updateZoom(parseFloat(e.target.value));
-    });
-    const zoomMinus = el.zoomSlider.previousElementSibling;
-    const zoomPlus = el.zoomSlider.nextElementSibling;
-    if (zoomMinus) zoomMinus.addEventListener('click', () => updateZoom(imageViewerState.scale - 0.2));
-    if (zoomPlus) zoomPlus.addEventListener('click', () => updateZoom(imageViewerState.scale + 0.2));
-  }
+let isBatchRendering = false;
 
-  if (el.imageViewerImg) {
-    el.imageViewerImg.addEventListener('wheel', onWheel);
-    el.imageViewerImg.addEventListener('mousedown', onMouseDown);
-  }
-  document.addEventListener('mousemove', onMouseMove);
-  document.addEventListener('mouseup', onMouseUp);
-
-  // Keyboard navigation
-  document.addEventListener('keydown', e => {
-    if (!el.imageViewer || !el.imageViewer.classList.contains('active')) return;
-    if (e.key === 'Escape') el.btnCloseViewer.click();
+el.zoomSlider = document.getElementById('zoom-slider');
+if (el.zoomSlider) {
+  el.zoomSlider.addEventListener('input', (e) => {
+    updateZoom(parseFloat(e.target.value));
   });
+  const zoomMinus = el.zoomSlider.previousElementSibling;
+  const zoomPlus = el.zoomSlider.nextElementSibling;
+  if (zoomMinus) zoomMinus.addEventListener('click', () => updateZoom(imageViewerState.scale - 0.2));
+  if (zoomPlus) zoomPlus.addEventListener('click', () => updateZoom(imageViewerState.scale + 0.2));
+}
+
+if (el.imageViewerImg) {
+  el.imageViewerImg.addEventListener('wheel', onWheel);
+  el.imageViewerImg.addEventListener('mousedown', onMouseDown);
+}
+document.addEventListener('mousemove', onMouseMove);
+document.addEventListener('mouseup', onMouseUp);
+
+// Keyboard navigation
+document.addEventListener('keydown', e => {
+  if (!el.imageViewer || !el.imageViewer.classList.contains('active')) return;
+  if (e.key === 'Escape') el.btnCloseViewer.click();
 });
 
 
@@ -583,7 +603,12 @@ function renderMessages() {
     return;
   }
   
+  isBatchRendering = true;
   msgs.forEach(m => appendMessageNode(m));
+  isBatchRendering = false;
+  
+  // Scroll to bottom immediately (not smooth)
+  el.messageFeed.scrollTo({ top: el.messageFeed.scrollHeight });
 }
 
 function appendMessageNode(msg) {
@@ -638,13 +663,22 @@ function appendMessageNode(msg) {
 
   let attachHtml = '';
   if (msg.file) {
-    // Resolve actual file data: live data > fileCache > null (page was reloaded)
-    const fileData = msg.file.data || getFile(msg.file.fileId) || null;
+    const fileId = msg.file.fileId;
+    const domId = `file-${fileId}-${Date.now()}`;
+    const fallbackId = `fb-${fileId}-${Date.now()}`;
+    
+    // Check local memory object on msg if present, otherwise rely on IDB async
+    const immediateData = msg.file.data || null;
+
     if (msg.file.mime && msg.file.mime.startsWith('image/')) {
-      if (fileData) {
-        attachHtml = `<div class="msg-attachment"><img src="${fileData}" alt="${msg.file.name}" class="chat-img" data-src="${fileData}"></div>`;
+      if (immediateData) {
+        attachHtml = `<div class="msg-attachment"><img src="${immediateData}" alt="${msg.file.name}" class="chat-img" data-src="${immediateData}"></div>`;
       } else {
-        attachHtml = `<div class="msg-attachment"><div class="file-card"><div class="fc-info"><div class="fc-icon"><i class="ph ph-image-broken"></i></div><div class="fc-details"><span class="fc-name">${msg.file.name}</span><span class="fc-size" style="color:var(--red)">Unavailable after reload</span></div></div></div></div>`;
+        // Placeholder waiting for IDB
+        attachHtml = `<div class="msg-attachment">
+          <img id="${domId}" src="" alt="${msg.file.name}" class="chat-img" style="display:none;" data-src="">
+          <div id="${fallbackId}"><div class="file-card"><div class="fc-info"><div class="fc-icon"><i class="ph ph-spinner ph-spin"></i></div><div class="fc-details"><span class="fc-name">${msg.file.name}</span><span class="fc-size" style="color:var(--muted)">Loading...</span></div></div></div></div>
+        </div>`;
       }
     } else {
       let icon = 'ph-file';
@@ -652,8 +686,8 @@ function appendMessageNode(msg) {
       if (msg.file.name.endsWith('.txt')) icon = 'ph-file-text';
       if (msg.file.name.endsWith('.pdf')) icon = 'ph-file-pdf';
 
-      if (fileData) {
-        const sizeBytes = Math.round((fileData.length - 22) * 0.75);
+      if (immediateData) {
+        const sizeBytes = Math.round((immediateData.length - 22) * 0.75);
         const sizeStr = formatBytes(sizeBytes);
         attachHtml = `
           <div class="msg-attachment">
@@ -665,14 +699,65 @@ function appendMessageNode(msg) {
                   <span class="fc-size">${sizeStr}</span>
                 </div>
               </div>
-              <a href="${fileData}" download="${msg.file.name}" class="fc-download" title="Download">
+              <a href="${immediateData}" download="${msg.file.name}" class="fc-download" title="Download">
                 <i class="ph ph-download-simple"></i>
               </a>
             </div>
           </div>`;
       } else {
-        attachHtml = `<div class="msg-attachment"><div class="file-card"><div class="fc-info"><div class="fc-icon"><i class="ph ${icon}"></i></div><div class="fc-details"><span class="fc-name">${msg.file.name}</span><span class="fc-size" style="color:var(--red)">Unavailable after reload</span></div></div></div></div>`;
+        // Placeholder waiting for IDB
+        attachHtml = `<div class="msg-attachment" id="${domId}">
+          <div class="file-card">
+            <div class="fc-info">
+              <div class="fc-icon"><i class="ph ph-spinner ph-spin"></i></div>
+              <div class="fc-details">
+                <span class="fc-name" title="${msg.file.name}">${msg.file.name}</span>
+                <span class="fc-size" style="color:var(--muted)">Loading...</span>
+              </div>
+            </div>
+          </div>
+        </div>`;
       }
+    }
+
+    // Resolve actual file data async
+    if (!immediateData && fileId) {
+      getFile(fileId).then(fileData => {
+        const wrapEl = document.getElementById(domId);
+        const fbEl = document.getElementById(fallbackId);
+        if (!fileData) {
+          if (wrapEl && wrapEl.tagName === 'IMG') {
+            if (fbEl) fbEl.innerHTML = `<div class="file-card"><div class="fc-info"><div class="fc-icon"><i class="ph ph-image-broken"></i></div><div class="fc-details"><span class="fc-name">${msg.file.name}</span><span class="fc-size" style="color:var(--red)">Unavailable after reload</span></div></div></div>`;
+          } else if (wrapEl) {
+            wrapEl.innerHTML = `<div class="file-card"><div class="fc-info"><div class="fc-icon"><i class="ph ph-file"></i></div><div class="fc-details"><span class="fc-name">${msg.file.name}</span><span class="fc-size" style="color:var(--red)">Unavailable after reload</span></div></div></div>`;
+          }
+        } else {
+          if (wrapEl && wrapEl.tagName === 'IMG') {
+            wrapEl.src = fileData; wrapEl.dataset.src = fileData; wrapEl.style.display = 'block';
+            if (fbEl) fbEl.style.display = 'none';
+          } else if (wrapEl) {
+            const sizeBytes = Math.round((fileData.length - 22) * 0.75);
+            const sizeStr = formatBytes(sizeBytes);
+            let icon = 'ph-file';
+            if (msg.file.name.endsWith('.zip')) icon = 'ph-file-zip';
+            if (msg.file.name.endsWith('.txt')) icon = 'ph-file-text';
+            if (msg.file.name.endsWith('.pdf')) icon = 'ph-file-pdf';
+            wrapEl.innerHTML = `
+              <div class="file-card">
+                <div class="fc-info">
+                  <div class="fc-icon"><i class="ph ${icon}"></i></div>
+                  <div class="fc-details">
+                    <span class="fc-name" title="${msg.file.name}">${msg.file.name}</span>
+                    <span class="fc-size">${sizeStr}</span>
+                  </div>
+                </div>
+                <a href="${fileData}" download="${msg.file.name}" class="fc-download" title="Download">
+                  <i class="ph ph-download-simple"></i>
+                </a>
+              </div>`;
+          }
+        }
+      });
     }
   }
 
@@ -716,7 +801,7 @@ function appendMessageNode(msg) {
       msgBody.insertAdjacentHTML('beforeend', attachHtml);
     }
     
-    el.messageFeed.scrollTo({ top: el.messageFeed.scrollHeight, behavior: 'smooth' });
+    if (!isBatchRendering) el.messageFeed.scrollTo({ top: el.messageFeed.scrollHeight, behavior: 'smooth' });
     return; // skip appending new wrapper
   }
   
@@ -747,7 +832,7 @@ function appendMessageNode(msg) {
   if (sysMsg) sysMsg.remove();
 
   el.messageFeed.appendChild(wrap);
-  el.messageFeed.scrollTo({ top: el.messageFeed.scrollHeight, behavior: 'smooth' });
+  if (!isBatchRendering) el.messageFeed.scrollTo({ top: el.messageFeed.scrollHeight, behavior: 'smooth' });
 
   // Image Viewer Handler
   const imgEl = wrap.querySelector('.chat-img');
@@ -979,13 +1064,37 @@ function sendChunked(conn, payload) {
     conn.send(payload);
     return;
   }
+  
   // Chunk the JSON string
   const totalChunks = Math.ceil(str.length / CHUNK_SIZE);
   const chunkId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  for (let i = 0; i < totalChunks; i++) {
+  let i = 0;
+
+  function sendNextChunk() {
+    if (!conn.open) return; // Stop if disconnected
+
+    // WebRTC has a hard buffer limit (~16MB). If we push too fast, it crashes.
+    // Pause sending if buffer is getting full (> 1MB)
+    if (conn.dataChannel && conn.dataChannel.bufferedAmount > 1024 * 1024) {
+      setTimeout(sendNextChunk, 50);
+      return;
+    }
+
     const slice = str.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
     conn.send({ __chunk: true, id: chunkId, index: i, total: totalChunks, slice });
+    i++;
+
+    if (i < totalChunks) {
+      // Yield to event loop every 5 chunks (~240KB) to prevent UI freezing
+      if (i % 5 === 0) {
+        setTimeout(sendNextChunk, 2);
+      } else {
+        sendNextChunk();
+      }
+    }
   }
+
+  sendNextChunk();
 }
 
 // Per-connection chunk reassembly buffers
@@ -1052,7 +1161,7 @@ function connectHost(roomId, name) {
         }
         else if (payload.type === 'message') {
           const fileData = payload.file || null;
-          const fileId = fileData ? `${Date.now()}-file` : null;
+          const fileId = fileData ? (fileData.fileId || `${Date.now()}-${Math.random().toString(36).slice(2,8)}-file`) : null;
           if (fileData && fileData.data) {
             storeFile(fileId, fileData.data); // cache blob in memory
           }
@@ -1072,6 +1181,24 @@ function connectHost(roomId, name) {
           broadcast(roomId, 'new_message', msg);
           if (activeServerId === roomId && activeChannelId === msg.channelId) {
             appendMessageNode(msg);
+          }
+        }
+        else if (payload.type === 'rename') {
+          const m = srvObj.members.find(m => m.id === conn.peer);
+          if (m) {
+            const oldName = m.name;
+            m.name = payload.name;
+            // update history
+            srvObj.history.forEach(msg => {
+              if (msg.senderId === conn.peer) msg.senderName = payload.name;
+            });
+            saveState();
+            broadcast(roomId, 'member_list', srvObj.members);
+            if (activeServerId === roomId) {
+              renderMembers();
+              renderApp(); // re-render messages
+              appendSysMsg(`✦ @${oldName} is now known as @${payload.name}.`);
+            }
           }
         }
         else if (payload.type === 'delete_req') {
@@ -1175,6 +1302,22 @@ function connectGuest(targetId, name, guestAvatar, isNewJoin = false) {
           srvObj.members = payload.data;
           saveState();
           if (activeServerId === targetId) renderMembers();
+        }
+        else if (payload.type === 'rename') {
+          const m = srvObj.members.find(m => m.id === payload.data.id);
+          if (m) {
+            const oldName = m.name;
+            m.name = payload.data.name;
+            srvObj.history.forEach(msg => {
+              if (msg.senderId === payload.data.id) msg.senderName = payload.data.name;
+            });
+            saveState();
+            if (activeServerId === targetId) {
+              renderMembers();
+              renderApp(); // re-render messages
+              appendSysMsg(`✦ @${oldName} is now known as @${payload.data.name}.`);
+            }
+          }
         }
         else if (payload.type === 'delete_msg') {
           srvObj.history = srvObj.history.filter(m => m.id !== payload.data.id);
@@ -1459,7 +1602,7 @@ function sendMsg(text, fileData = null) {
   if (!srv) return;
 
   // Cache file blob in memory
-  const fileId = fileData ? `${Date.now()}-file` : null;
+  const fileId = fileData ? `${Date.now()}-${Math.random().toString(36).slice(2,8)}-file` : null;
   if (fileData && fileData.data) storeFile(fileId, fileData.data);
   const filePayload = fileData ? { ...fileData, fileId } : null;
 
@@ -1492,9 +1635,10 @@ el.chatForm.addEventListener('submit', e => {
 
   if (stagedFiles.length > 0) {
     // Send text with first file, then each remaining file as its own message
-    sendMsg(text, stagedFiles[0]);
-    for (let i = 1; i < stagedFiles.length; i++) {
-      setTimeout(() => sendMsg('', stagedFiles[i]), i * 80);
+    const filesToSend = [...stagedFiles];
+    sendMsg(text, filesToSend[0]);
+    for (let i = 1; i < filesToSend.length; i++) {
+      setTimeout(() => sendMsg('', filesToSend[i]), i * 80);
     }
   } else {
     sendMsg(text, null);
@@ -1749,7 +1893,15 @@ if (el.btnSaveUsername) {
         net.connections[0].send({ type: 'rename', name: newName });
       }
     } else {
-      broadcast(srv.id, 'channel_update', srv.channels); // Force UI update
+      const myMem = srv.members.find(m => m.id === 'host' || m.isHost);
+      if (myMem) myMem.name = newName;
+      srv.history.forEach(msg => {
+        if (msg.senderId === 'host') msg.senderName = newName;
+      });
+      saveState();
+      renderMembers();
+      renderApp(); // re-render messages
+      broadcast(srv.id, 'rename', { id: 'host', name: newName });
     }
     el.modalSettings.classList.remove('active');
   });
