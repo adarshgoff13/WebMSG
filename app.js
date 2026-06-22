@@ -817,8 +817,10 @@ function appendMessageNode(msg) {
     }
   }
 
-  const textHtml = parsedText ? `<div class="msg-bubble">${repliedToHtml}${parsedText}</div>` : (repliedToHtml ? `<div class="msg-bubble">${repliedToHtml}</div>` : '');
+  const editedLabel = msg.edited ? `<span class="msg-edited-label">(edited)</span>` : '';
+  const textHtml = parsedText ? `<div class="msg-bubble">${repliedToHtml}${parsedText}${editedLabel}</div>` : (repliedToHtml ? `<div class="msg-bubble">${repliedToHtml}${editedLabel}</div>` : '');
   
+
   if (isClustered) {
     const bubble = lastEl.querySelector('.msg-bubble');
     const msgBody = lastEl.querySelector('.msg-body');
@@ -827,7 +829,7 @@ function appendMessageNode(msg) {
       const line = document.createElement('div');
       line.id = `msg-${msg.id}`; // store ID so delete works if triggered externally
       line.style.marginTop = '4px';
-      line.innerHTML = parsedText;
+      line.innerHTML = parsedText + editedLabel;
       bubble.appendChild(line);
     } else if (!bubble && parsedText && msgBody) {
       // If previous msg had no text bubble (only attachment), create one
@@ -888,25 +890,72 @@ function appendMessageNode(msg) {
         if (isSelf || srv.isHost) {
           menu.appendChild(editBtn);
           editBtn.addEventListener('click', () => {
-            const bubbleEl = document.getElementById(`msg-${msg.id}`) || wrap.querySelector('.msg-bubble');
+            // Use wrap.querySelector to get the bubble (not getElementById which returns the whole wrapper)
+            const bubbleEl = wrap.querySelector('.msg-bubble');
             if (bubbleEl) {
-              const currentText = msg.text || '';
-              bubbleEl.innerHTML = `<input type="text" class="inp" id="edit-inp-${msg.id}" value="${currentText.replace(/"/g, '&quot;')}" style="width:100%; padding: 4px; border-radius: 4px; background: var(--bg); color: var(--text);">`;
-              const inp = document.getElementById(`edit-inp-${msg.id}`);
-              inp.focus();
-              inp.addEventListener('keydown', e => {
-                if (e.key === 'Enter') {
-                  const newText = inp.value;
-                  msg.text = newText;
-                  saveState();
-                  if (srv.isHost) {
-                    broadcast(srv.id, 'edit_msg', { id: msg.id, text: newText });
-                  } else {
-                    const net = getActiveNet();
-                    if (net && net.connections[0]) net.connections[0].send({ type: 'edit_msg', id: msg.id, text: newText });
+              // Extract all text from the bubble, including child divs (grouped messages)
+              // innerText naturally handles newlines and child block elements.
+              let currentText = bubbleEl.innerText;
+              // Remove the '(edited)' text from the end if it's there
+              currentText = currentText.replace(/\(edited\)$/, '').trimEnd();
+              
+              // Find all child message IDs that were grouped into this bubble
+              const childDivs = bubbleEl.querySelectorAll('div[id^="msg-"]');
+              const childIds = Array.from(childDivs).map(div => div.id.replace('msg-', ''));
+
+              // Make bubble editable in-place — same UI, no new elements
+              bubbleEl.setAttribute('contenteditable', 'true');
+              bubbleEl.style.outline = '2px solid var(--accent)';
+              bubbleEl.style.cursor = 'text';
+              bubbleEl.innerText = currentText; // Shows ALL text including newlines from merged group
+              bubbleEl.focus();
+              // Move cursor to end
+              const range = document.createRange();
+              const sel = window.getSelection();
+              range.selectNodeContents(bubbleEl);
+              range.collapse(false);
+              sel.removeAllRanges();
+              sel.addRange(range);
+
+              const saveEdit = () => {
+                const newText = bubbleEl.innerText;
+                bubbleEl.removeAttribute('contenteditable');
+                bubbleEl.style.outline = '';
+                bubbleEl.style.cursor = '';
+                
+                // Merge text into the first message
+                msg.text = newText;
+                msg.edited = true;
+
+                // Delete the child messages that were merged
+                if (childIds.length > 0) {
+                  childIds.forEach(id => {
+                    srv.history = srv.history.filter(m => m.id !== id);
+                  });
+                }
+                saveState();
+
+                if (srv.isHost) {
+                  broadcast(srv.id, 'edit_msg', { id: msg.id, text: newText });
+                  childIds.forEach(id => broadcast(srv.id, 'delete_msg', { id }));
+                } else {
+                  const net = getActiveNet();
+                  if (net && net.connections[0]) {
+                    net.connections[0].send({ type: 'edit_msg', id: msg.id, text: newText });
+                    childIds.forEach(id => net.connections[0].send({ type: 'delete_req', id }));
                   }
-                  renderMessages();
+                }
+                renderMessages();
+              };
+
+              bubbleEl.addEventListener('keydown', e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  saveEdit();
                 } else if (e.key === 'Escape') {
+                  bubbleEl.removeAttribute('contenteditable');
+                  bubbleEl.style.outline = '';
+                  bubbleEl.style.cursor = '';
                   renderMessages();
                 }
               });
@@ -972,7 +1021,37 @@ function appendMessageNode(msg) {
           ? '<i class="ph ph-push-pin-slash"></i> Unpin Message'
           : '<i class="ph ph-push-pin"></i> Pin Message';
         menu.appendChild(pinBtn);
-        pinBtn.addEventListener('click', () => { pinMessage(msg, !isPinned); closeMenu(); });
+        pinBtn.addEventListener('click', () => { 
+          const bubbleEl = wrap.querySelector('.msg-bubble');
+          if (bubbleEl) {
+            const childDivs = bubbleEl.querySelectorAll('div[id^="msg-"]');
+            if (childDivs.length > 0) {
+              // It's a clustered message. Merge before pinning.
+              let fullText = bubbleEl.innerText.replace(/\(edited\)$/, '').trimEnd();
+              msg.text = fullText;
+              const childIds = Array.from(childDivs).map(div => div.id.replace('msg-', ''));
+              childIds.forEach(id => {
+                srv.history = srv.history.filter(m => m.id !== id);
+                document.getElementById(`msg-${id}`)?.remove();
+              });
+              saveState();
+              if (srv.isHost) {
+                broadcast(srv.id, 'edit_msg', { id: msg.id, text: fullText });
+                childIds.forEach(id => broadcast(srv.id, 'delete_msg', { id }));
+              } else {
+                const net = getActiveNet();
+                if (net && net.connections[0]) {
+                  net.connections[0].send({ type: 'edit_msg', id: msg.id, text: fullText });
+                  childIds.forEach(id => net.connections[0].send({ type: 'delete_req', id }));
+                }
+              }
+              // Re-render to show merged state cleanly
+              renderMessages();
+            }
+          }
+          pinMessage(msg, !isPinned); 
+          closeMenu(); 
+        });
 
         // Position menu near button
         const rect = ellipsisBtn.getBoundingClientRect();
@@ -1304,11 +1383,12 @@ function connectHost(roomId, name) {
           const target = srvObj.history.find(m => m.id === payload.id);
           if (target && (target.senderId === conn.peer || srvObj.isHost)) {
             target.text = payload.text;
+            target.edited = true;
             saveState();
             broadcast(roomId, 'edit_msg', { id: payload.id, text: payload.text });
             if (activeServerId === roomId) {
               const b = document.getElementById(`msg-${payload.id}`);
-              if (b) b.innerHTML = payload.text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/(https?:\/\/[^\s]+)/gi, url => `<a href="${url}" target="_blank" class="msg-link">${url}</a>`);
+              if (b) b.innerHTML = payload.text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/(https?:\/\/[^\s]+)/gi, url => `<a href="${url}" target="_blank" class="msg-link">${url}</a>`) + '<span class="msg-edited-label">(edited)</span>';
             }
           }
         }
@@ -1434,10 +1514,11 @@ function connectGuest(targetId, name, guestAvatar, isNewJoin = false) {
           const target = srvObj.history.find(m => m.id === payload.data.id);
           if (target) {
             target.text = payload.data.text;
+            target.edited = true;
             saveState();
             if (activeServerId === targetId) {
               const b = document.getElementById(`msg-${payload.data.id}`);
-              if (b) b.innerHTML = payload.data.text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/(https?:\/\/[^\s]+)/gi, url => `<a href="${url}" target="_blank" class="msg-link">${url}</a>`);
+              if (b) b.innerHTML = payload.data.text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/(https?:\/\/[^\s]+)/gi, url => `<a href="${url}" target="_blank" class="msg-link">${url}</a>`) + '<span class="msg-edited-label">(edited)</span>';
             }
           }
         }
@@ -1773,8 +1854,22 @@ el.chatForm.addEventListener('submit', e => {
   }
 
   el.messageInput.value = '';
+  el.messageInput.style.height = 'auto'; // Reset textarea height
   stagedFiles = [];
   renderStagingArea();
+});
+
+// Textarea auto-expand and submit on Enter (unless Shift is held)
+el.messageInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    el.chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  }
+});
+el.messageInput.addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = (this.scrollHeight) + 'px';
+  if (this.value === '') this.style.height = 'auto';
 });
 
 // File staging helpers
