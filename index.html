@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WebMSG</title>
   <meta name="description" content="WebMSG – Serverless peer-to-peer browser messaging.">
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="WebMSG_logo.png">
 
   <!-- Montserrat -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -15,7 +17,7 @@
   <script src="https://unpkg.com/@phosphor-icons/web"></script>
   <!-- PeerJS -->
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <link rel="stylesheet" href="style.css?v=20">
+  <link rel="stylesheet" href="style.css?v=24">
 
   <!-- Theme Initialization (Prevents FOUC) -->
   <script>
@@ -80,8 +82,9 @@
         <div class="server-info">
           <span class="info-label">Invite Code</span>
           <div class="code-box">
-            <span id="display-invite-code">------</span>
-            <button id="btn-copy-code" title="Copy"><i class="ph ph-copy"></i></button>
+            <span id="display-invite-code">••••••••</span>
+            <button id="btn-reveal-code" title="Toggle visibility"><i class="ph ph-eye"></i></button>
+            <button id="btn-copy-code" title="Copy to clipboard"><i class="ph ph-copy"></i></button>
           </div>
         </div>
         <button class="btn-danger-outline" id="btn-leave-server">
@@ -318,7 +321,21 @@
             <option value="'Playfair Display', serif">Playfair Display</option>
             <option value="'Fira Code', monospace">Fira Code</option>
             <option value="'Comic Neue', cursive">Comic Neue</option>
-            <option value="'Pacifico', cursive">Pacifico</option>
+            <option value="'Space Mono', monospace">Space Mono</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label class="field-label">Font Style & Weight</label>
+          <select id="inp-setting-font-style" class="inp">
+            <option value="normal|normal">Regular</option>
+            <option value="normal|italic">Italic</option>
+            <option value="300|normal">Slim</option>
+            <option value="300|italic">Slim Italic</option>
+            <option value="bold|normal">Bold</option>
+            <option value="bold|italic">Bold Italic</option>
+            <option value="900|normal">Black</option>
+            <option value="900|italic">Black Italic</option>
           </select>
         </div>
 
@@ -401,6 +418,6 @@
 
   <!-- Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.4.7/dist/peerjs.min.js"></script>
-  <script src="app.js?v=20"></script>
+  <script src="app.js?v=24"></script>
 </body>
 </html>

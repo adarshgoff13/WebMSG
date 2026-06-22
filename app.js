@@ -6,8 +6,12 @@
 // Initialize Font Preferences
 const savedFont = localStorage.getItem('chatFont') || "'Montserrat', sans-serif";
 const savedFontSize = localStorage.getItem('chatFontSize') || "14";
+const savedFontStyleWeight = localStorage.getItem('chatFontStyleWeight') || "normal|normal";
 document.documentElement.style.setProperty('--font', savedFont);
 document.documentElement.style.setProperty('--msg-size', `${savedFontSize}px`);
+const [fw, fs] = savedFontStyleWeight.split('|');
+document.documentElement.style.setProperty('--font-weight', fw);
+document.documentElement.style.setProperty('--font-style', fs);
 
 /* ──────────────────────────────────────────────
    DOM Elements
@@ -25,6 +29,7 @@ const el = {
   roleBadge: document.getElementById('current-role-badge'),
   inviteCode: document.getElementById('display-invite-code'),
   btnCopyCode: document.getElementById('btn-copy-code'),
+  btnRevealCode: document.getElementById('btn-reveal-code'),
   btnLeaveServer: document.getElementById('btn-leave-server'),
   channelList: document.getElementById('channel-list'),
   btnCreateChannel: document.getElementById('btn-create-channel'),
@@ -114,6 +119,7 @@ const el = {
   inpSettingStorage: document.getElementById('inp-setting-storage'),
   storageValDisplay: document.getElementById('storage-val-display'),
   inpSettingFont: document.getElementById('inp-setting-font'),
+  inpSettingFontStyle: document.getElementById('inp-setting-font-style'),
   inpSettingFontSize: document.getElementById('inp-setting-fontsize'),
   fontSizeDisplay: document.getElementById('fontsize-val-display'),
   btnSettingLeave: document.getElementById('btn-setting-leave'),
@@ -325,9 +331,25 @@ function renderApp() {
   el.inputArea.style.pointerEvents = 'auto';
 
   // Info
-  el.serverName.textContent = srv.name;
+  el.serverName.textContent = srv.name || 'Server';
+  el.inviteCode.textContent = '••••••••';
+  el.inviteCode.dataset.code = srv.id;
+  el.inviteCode.dataset.hidden = 'true';
+  if (el.btnRevealCode) {
+    el.btnRevealCode.innerHTML = '<i class="ph ph-eye"></i>';
+    el.btnRevealCode.onclick = () => {
+      if (el.inviteCode.dataset.hidden === 'true') {
+        el.inviteCode.textContent = el.inviteCode.dataset.code;
+        el.inviteCode.dataset.hidden = 'false';
+        el.btnRevealCode.innerHTML = '<i class="ph ph-eye-slash"></i>';
+      } else {
+        el.inviteCode.textContent = '••••••••';
+        el.inviteCode.dataset.hidden = 'true';
+        el.btnRevealCode.innerHTML = '<i class="ph ph-eye"></i>';
+      }
+    };
+  }
   el.roleBadge.textContent = srv.isHost ? 'Host' : 'Guest';
-  el.inviteCode.textContent = srv.id;
   el.myAvInitial.textContent = srv.username.charAt(0).toUpperCase();
   el.myUsername.textContent = srv.username;
   el.btnCreateChannel.style.display = srv.isHost ? 'block' : 'none';
@@ -576,6 +598,13 @@ if (el.zoomSlider) {
   if (zoomPlus) zoomPlus.addEventListener('click', () => updateZoom(imageViewerState.scale + 0.2));
 }
 
+// Image Viewer Event Delegation
+document.addEventListener('click', e => {
+  if (e.target.classList.contains('chat-img')) {
+    openImageViewer(e.target.getAttribute('data-src'));
+  }
+});
+
 if (el.imageViewerImg) {
   el.imageViewerImg.addEventListener('wheel', onWheel);
   el.imageViewerImg.addEventListener('mousedown', onMouseDown);
@@ -778,7 +807,17 @@ function appendMessageNode(msg) {
     if (isPinged) wrap.classList.add('is-pinged');
   }
   
-  const textHtml = parsedText ? `<div class="msg-bubble">${parsedText}</div>` : '';
+  let repliedToHtml = '';
+  if (msg.replyTo) {
+    const srv = getActiveSrv();
+    const repliedMsg = srv.history.find(m => m.id === msg.replyTo);
+    if (repliedMsg) {
+      const snippet = repliedMsg.text ? (repliedMsg.text.substring(0, 30) + '...') : 'Attachment';
+      repliedToHtml = `<div class="replied-to-block" onclick="const el = document.getElementById('msg-${repliedMsg.id}'); if(el) {el.scrollIntoView({behavior:'smooth',block:'center'}); el.classList.add('highlight-msg'); setTimeout(()=>el.classList.remove('highlight-msg'),2000);}"><i class="ph ph-arrow-u-up-left"></i> <b>${repliedMsg.senderName}</b>: ${snippet}</div>`;
+    }
+  }
+
+  const textHtml = parsedText ? `<div class="msg-bubble">${repliedToHtml}${parsedText}</div>` : (repliedToHtml ? `<div class="msg-bubble">${repliedToHtml}</div>` : '');
   
   if (isClustered) {
     const bubble = lastEl.querySelector('.msg-bubble');
@@ -834,16 +873,8 @@ function appendMessageNode(msg) {
   el.messageFeed.appendChild(wrap);
   if (!isBatchRendering) el.messageFeed.scrollTo({ top: el.messageFeed.scrollHeight, behavior: 'smooth' });
 
-  // Image Viewer Handler
-  const imgEl = wrap.querySelector('.chat-img');
-  if (imgEl) {
-    imgEl.addEventListener('click', () => {
-      openImageViewer(imgEl.getAttribute('data-src'));
-    });
-  }
-
-    // Delete handler now uses ellipsis menu
-    const ellipsisBtn = wrap.querySelector('.msg-ellipsis');
+  // Delete handler now uses ellipsis menu
+  const ellipsisBtn = wrap.querySelector('.msg-ellipsis');
     if (ellipsisBtn) {
       ellipsisBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -852,14 +883,69 @@ function appendMessageNode(msg) {
         const menu = document.createElement('div');
         menu.className = 'msg-menu';
         
+        const editBtn = document.createElement('button');
+        editBtn.innerHTML = '<i class="ph ph-pencil-simple"></i> Edit';
+        if (isSelf || srv.isHost) {
+          menu.appendChild(editBtn);
+          editBtn.addEventListener('click', () => {
+            const bubbleEl = document.getElementById(`msg-${msg.id}`) || wrap.querySelector('.msg-bubble');
+            if (bubbleEl) {
+              const currentText = msg.text || '';
+              bubbleEl.innerHTML = `<input type="text" class="inp" id="edit-inp-${msg.id}" value="${currentText.replace(/"/g, '&quot;')}" style="width:100%; padding: 4px; border-radius: 4px; background: var(--bg); color: var(--text);">`;
+              const inp = document.getElementById(`edit-inp-${msg.id}`);
+              inp.focus();
+              inp.addEventListener('keydown', e => {
+                if (e.key === 'Enter') {
+                  const newText = inp.value;
+                  msg.text = newText;
+                  saveState();
+                  if (srv.isHost) {
+                    broadcast(srv.id, 'edit_msg', { id: msg.id, text: newText });
+                  } else {
+                    const net = getActiveNet();
+                    if (net && net.connections[0]) net.connections[0].send({ type: 'edit_msg', id: msg.id, text: newText });
+                  }
+                  renderMessages();
+                } else if (e.key === 'Escape') {
+                  renderMessages();
+                }
+              });
+            }
+            closeMenu();
+          });
+        }
+
+        const replyBtn = document.createElement('button');
+        replyBtn.innerHTML = '<i class="ph ph-arrow-u-up-left"></i> Reply';
+        menu.appendChild(replyBtn);
+        replyBtn.addEventListener('click', () => {
+          window.replyingToMsg = msg;
+          let replyBanner = document.getElementById('reply-banner');
+          if (!replyBanner) {
+            replyBanner = document.createElement('div');
+            replyBanner.id = 'reply-banner';
+            replyBanner.className = 'reply-banner';
+            const chatInputContainer = document.querySelector('.chat-input');
+            chatInputContainer.parentNode.insertBefore(replyBanner, chatInputContainer);
+          }
+          const snippet = msg.text ? (msg.text.substring(0, 20) + '...') : 'Attachment';
+          replyBanner.innerHTML = `<span>Replying to <b>${msg.senderName}</b>: ${snippet}</span><button id="cancel-reply" class="btn-icon"><i class="ph ph-x"></i></button>`;
+          document.getElementById('cancel-reply').addEventListener('click', () => {
+            replyBanner.remove();
+            window.replyingToMsg = null;
+          });
+          el.messageInput.focus();
+          closeMenu();
+        });
+
         const delMe = document.createElement('button');
-        delMe.textContent = 'Delete for me';
+        delMe.innerHTML = '<i class="ph ph-trash"></i> Delete for me';
         menu.appendChild(delMe);
 
         let delAll = null;
         if (srv.isHost) {
           delAll = document.createElement('button');
-          delAll.textContent = 'Delete for everyone';
+          delAll.innerHTML = '<i class="ph ph-trash"></i> Delete for everyone';
           menu.appendChild(delAll);
           
           if (!isSelf) {
@@ -969,7 +1055,19 @@ function renderPinnedPanel() {
     let previewHtml = '';
     if (msg.file) {
       if (msg.file.mime && msg.file.mime.startsWith('image/')) {
-        previewHtml = `<div class="pinned-preview"><img src="${msg.file.data}" style="max-height: 80px; border-radius: 4px; margin-top: 6px;"></div>`;
+        const domId = `pinned-img-${msg.id}-${Date.now()}`;
+        previewHtml = `<div class="pinned-preview"><img id="${domId}" src="" style="max-height: 80px; border-radius: 4px; margin-top: 6px; display: none;"></div>`;
+        const immediateData = msg.file.data || null;
+        if (immediateData) {
+          setTimeout(() => { const el = document.getElementById(domId); if (el) { el.src = immediateData; el.style.display = 'block'; } }, 0);
+        } else if (msg.file.fileId) {
+          getFile(msg.file.fileId).then(fileData => {
+            if (fileData) {
+              const el = document.getElementById(domId);
+              if (el) { el.src = fileData; el.style.display = 'block'; }
+            }
+          });
+        }
       } else {
         previewHtml = `<div class="pinned-preview" style="margin-top: 6px; font-size: 0.8rem; color: var(--accent);"><i class="ph ph-file"></i> ${msg.file.name}</div>`;
       }
@@ -1174,6 +1272,7 @@ function connectHost(roomId, name) {
             time: ts(),
             isHost: false,
             file: fileData ? { name: fileData.name, mime: fileData.mime, fileId, data: fileData.data } : null,
+            replyTo: payload.replyTo || null
           };
           srvObj.history.push(msg);
           saveState();
@@ -1198,6 +1297,18 @@ function connectHost(roomId, name) {
               renderMembers();
               renderApp(); // re-render messages
               appendSysMsg(`✦ @${oldName} is now known as @${payload.name}.`);
+            }
+          }
+        }
+        else if (payload.type === 'edit_msg') {
+          const target = srvObj.history.find(m => m.id === payload.id);
+          if (target && (target.senderId === conn.peer || srvObj.isHost)) {
+            target.text = payload.text;
+            saveState();
+            broadcast(roomId, 'edit_msg', { id: payload.id, text: payload.text });
+            if (activeServerId === roomId) {
+              const b = document.getElementById(`msg-${payload.id}`);
+              if (b) b.innerHTML = payload.text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/(https?:\/\/[^\s]+)/gi, url => `<a href="${url}" target="_blank" class="msg-link">${url}</a>`);
             }
           }
         }
@@ -1316,6 +1427,17 @@ function connectGuest(targetId, name, guestAvatar, isNewJoin = false) {
               renderMembers();
               renderApp(); // re-render messages
               appendSysMsg(`✦ @${oldName} is now known as @${payload.data.name}.`);
+            }
+          }
+        }
+        else if (payload.type === 'edit_msg') {
+          const target = srvObj.history.find(m => m.id === payload.data.id);
+          if (target) {
+            target.text = payload.data.text;
+            saveState();
+            if (activeServerId === targetId) {
+              const b = document.getElementById(`msg-${payload.data.id}`);
+              if (b) b.innerHTML = payload.data.text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/(https?:\/\/[^\s]+)/gi, url => `<a href="${url}" target="_blank" class="msg-link">${url}</a>`);
             }
           }
         }
@@ -1612,7 +1734,8 @@ function sendMsg(text, fileData = null) {
       channelId: activeChannelId,
       senderId: 'host',
       senderName: srv.username,
-      text, time: ts(), isHost: true, file: filePayload
+      text, time: ts(), isHost: true, file: filePayload,
+      replyTo: window.replyingToMsg ? window.replyingToMsg.id : null
     };
     srv.history.push(msg);
     saveState();
@@ -1621,10 +1744,15 @@ function sendMsg(text, fileData = null) {
   } else {
     const net = getActiveNet();
     if (net && net.connections[0]?.open) {
-      sendChunked(net.connections[0], { type: 'message', channelId: activeChannelId, text, file: filePayload });
+      sendChunked(net.connections[0], { type: 'message', channelId: activeChannelId, text, file: filePayload, replyTo: window.replyingToMsg ? window.replyingToMsg.id : null });
     } else {
       showErrorToast('Not connected to host. Please check your connection.');
     }
+  }
+  
+  if (window.replyingToMsg) {
+    document.getElementById('reply-banner')?.remove();
+    window.replyingToMsg = null;
   }
 }
 
@@ -1862,6 +1990,7 @@ if (el.btnSettings) {
     el.storageValDisplay.textContent = currentMaxMB >= 1000 ? `${(currentMaxMB/1000).toFixed(1)}GB` : `${currentMaxMB}MB`;
 
     if (el.inpSettingFont) el.inpSettingFont.value = localStorage.getItem('chatFont') || "'Montserrat', sans-serif";
+    if (el.inpSettingFontStyle) el.inpSettingFontStyle.value = localStorage.getItem('chatFontStyleWeight') || "normal|normal";
     if (el.inpSettingFontSize) {
       const fs = localStorage.getItem('chatFontSize') || "14";
       el.inpSettingFontSize.value = fs;
@@ -1938,6 +2067,16 @@ if (el.inpSettingFont) {
     const val = e.target.value;
     localStorage.setItem('chatFont', val);
     document.documentElement.style.setProperty('--font', val);
+  });
+}
+
+if (el.inpSettingFontStyle) {
+  el.inpSettingFontStyle.addEventListener('change', (e) => {
+    const val = e.target.value;
+    localStorage.setItem('chatFontStyleWeight', val);
+    const [fw, fs] = val.split('|');
+    document.documentElement.style.setProperty('--font-weight', fw);
+    document.documentElement.style.setProperty('--font-style', fs);
   });
 }
 
