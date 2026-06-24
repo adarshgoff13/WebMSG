@@ -8,7 +8,7 @@
   <!-- Favicon -->
   <link rel="icon" type="png" href="WebMSG_logo.png">
 
-  <!-- Montserrat -->
+ <!-- Montserrat -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700;900&family=Inter:wght@400;500;700;900&family=Roboto:wght@400;500;700;900&family=Open+Sans:wght@400;600;700;800&family=Lora:ital,wght@0,400;0,700;1,400&family=Merriweather:wght@400;700;900&family=Playfair+Display:wght@400;700;900&family=Fira+Code:wght@400;700&family=Comic+Neue:wght@400;700&family=Pacifico&display=swap" rel="stylesheet">
@@ -17,7 +17,7 @@
   <script src="https://unpkg.com/@phosphor-icons/web"></script>
   <!-- PeerJS -->
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-  <link rel="stylesheet" href="style.css?v=29">
+  <link rel="stylesheet" href="style.css?v=39">
 
   <!-- Theme Initialization (Prevents FOUC) -->
   <script>
@@ -121,26 +121,28 @@
 
       <!-- Input area -->
       <div class="input-area" id="input-area" style="opacity: 0.5; pointer-events: none;">
-        <div class="upload-bar" id="upload-progress-container">
-          <div class="upload-info">
-            <span id="upload-filename">file.png</span>
-            <span id="upload-percent">0%</span>
-          </div>
-          <div class="upload-track"><div class="upload-fill" id="upload-progress-fill"></div></div>
-        </div>
-
         <div class="emoji-picker" id="emoji-picker"></div>
-        <div id="staging-area" style="display:none; flex-direction:column; background:var(--glass2); padding:8px 12px; border-radius:var(--r-md); margin-bottom:10px; border:1px solid var(--border); gap:6px;">
-          <div id="staged-files-list" style="display:flex; flex-direction:column; gap:4px; max-height:130px; overflow-y:auto;"></div>
-          <div style="font-size:11px; color:var(--muted); text-align:right;" id="staged-count-label">0 / 5 files</div>
+        <div id="staging-area" style="display:none; flex-direction:column; background:var(--glass2); padding:10px 12px; border-radius:var(--r-md); margin-bottom:10px; border:1px solid var(--border); gap:8px;">
+          <div id="staged-files-list" style="display:flex; flex-direction:row; gap:10px; overflow-x:auto; padding-bottom:4px;"></div>
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <div id="upload-progress-container" style="display:none; flex:1; margin-right:12px;">
+              <div class="upload-info"><span id="upload-filename">file.png</span><span id="upload-percent">0%</span></div>
+              <div class="upload-track"><div class="upload-fill" id="upload-progress-fill"></div></div>
+            </div>
+            <div style="font-size:11px; color:var(--muted);" id="staged-count-label">0 / 5 files</div>
+          </div>
         </div>
         <form id="chat-form">
           <button type="button" class="form-icon" id="btn-emoji" title="Emojis"><i class="ph ph-smiley"></i></button>
           <button type="button" class="form-icon" id="btn-attach" title="Attach file"><i class="ph ph-paperclip"></i></button>
           <input type="file" id="file-input" hidden>
-          <textarea id="message-input" placeholder="Message..." autocomplete="off" rows="1" style="resize:none; padding-top:14px; padding-bottom:14px; box-sizing:border-box; overflow:hidden; font-family:inherit;"></textarea>
+          <textarea id="message-input" placeholder="Message..." autocomplete="off" rows="1" style="resize:none; box-sizing:border-box; overflow-y:auto; font-family:inherit;"></textarea>
           <button type="submit" class="send-btn"><i class="ph-fill ph-paper-plane-right"></i></button>
         </form>
+        <div id="drag-overlay">
+          <i class="ph ph-upload-simple"></i>
+          <div>Drop files to upload</div>
+        </div>
       </div>
 
     </main>
@@ -418,6 +420,6 @@
 
   <!-- Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.4.7/dist/peerjs.min.js"></script>
-  <script src="app.js?v=29"></script>
+  <script src="app.js?v=39"></script>
 </body>
 </html>

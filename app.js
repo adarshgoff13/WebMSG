@@ -1021,6 +1021,37 @@ function appendMessageNode(msg) {
           ? '<i class="ph ph-push-pin-slash"></i> Unpin Message'
           : '<i class="ph ph-push-pin"></i> Pin Message';
         menu.appendChild(pinBtn);
+
+        // Copy option
+        const copyBtn = document.createElement('button');
+        copyBtn.innerHTML = '<i class="ph ph-copy"></i> Copy';
+        menu.appendChild(copyBtn);
+        copyBtn.addEventListener('click', async () => {
+          try {
+            // If it's an image file
+            if (msg.file && msg.file.mime && msg.file.mime.startsWith('image/')) {
+              const res = await fetch(msg.file.data);
+              const blob = await res.blob();
+              await navigator.clipboard.write([
+                new ClipboardItem({ [blob.type]: blob })
+              ]);
+              showErrorToast('Image copied to clipboard!'); // using showErrorToast just as a toast mechanism
+            } 
+            // If there's text (and maybe a non-image file, we just copy the text)
+            else if (msg.text) {
+              await navigator.clipboard.writeText(msg.text);
+              showErrorToast('Text copied to clipboard!');
+            }
+            // Non-image file without text
+            else if (msg.file) {
+              showErrorToast('Cannot copy binary files to clipboard. Please use the Download button instead.');
+            }
+          } catch (err) {
+            console.error('Copy failed', err);
+            showErrorToast('Failed to copy. ' + (err.message || ''));
+          }
+          closeMenu();
+        });
         pinBtn.addEventListener('click', () => { 
           const bubbleEl = wrap.querySelector('.msg-bubble');
           if (bubbleEl) {
@@ -1060,16 +1091,40 @@ function appendMessageNode(msg) {
         document.body.appendChild(menu);
         const closeMenu = () => { menu.remove(); document.removeEventListener('click', closeMenu); };
         setTimeout(() => document.addEventListener('click', closeMenu), 0);
+        const getChildIds = () => {
+          const bubbleEl = wrap.querySelector('.msg-bubble');
+          if (bubbleEl) {
+            return Array.from(bubbleEl.querySelectorAll('div[id^="msg-"]')).map(div => div.id.replace('msg-', ''));
+          }
+          return [];
+        };
+
         delMe.addEventListener('click', () => {
+          const childIds = getChildIds();
           document.getElementById(`msg-${msg.id}`)?.remove();
-          showUndoToast(msg, false);
+          childIds.forEach(id => document.getElementById(`msg-${id}`)?.remove());
+          showUndoToast(msg, false); // Just doing it for the parent msg is usually enough visually
           closeMenu();
         });
         if (delAll) {
           delAll.addEventListener('click', () => {
+            const childIds = getChildIds();
+            
             // Host deletes globally, but we use undo toast first
-            document.getElementById(`msg-${msg.id}`)?.remove();
-            showUndoToast(msg, true);
+            if (srv.isHost) {
+              document.getElementById(`msg-${msg.id}`)?.remove();
+              childIds.forEach(id => document.getElementById(`msg-${id}`)?.remove());
+              showUndoToast(msg, true);
+            } else {
+              // Guest requests deletion
+              document.getElementById(`msg-${msg.id}`)?.remove();
+              childIds.forEach(id => document.getElementById(`msg-${id}`)?.remove());
+              const net = getActiveNet();
+              if (net && net.connections[0]) {
+                net.connections[0].send({ type: 'delete_req', id: msg.id });
+                childIds.forEach(id => net.connections[0].send({ type: 'delete_req', id }));
+              }
+            }
             closeMenu();
           });
         }
@@ -1867,9 +1922,16 @@ el.messageInput.addEventListener('keydown', e => {
   }
 });
 el.messageInput.addEventListener('input', function() {
+  // Word limit: 500 words
+  const words = this.value.trim().split(/\s+/).filter(Boolean);
+  if (words.length > 500) {
+    // Trim to 500 words
+    this.value = words.slice(0, 500).join(' ');
+    showErrorToast('Message limit: 500 words');
+  }
+  // Auto-expand up to the CSS max-height (120px), then scroll inside
   this.style.height = 'auto';
-  this.style.height = (this.scrollHeight) + 'px';
-  if (this.value === '') this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 100) + 'px';
 });
 
 // File staging helpers
@@ -1878,48 +1940,56 @@ function renderStagingArea() {
   const label = document.getElementById('staged-count-label');
   if (!list) return;
   list.innerHTML = '';
+
   stagedFiles.forEach((f, idx) => {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;background:var(--glass);border:1px solid var(--border);border-radius:8px;padding:6px 10px;overflow:hidden;';
-    // Thumbnail or icon
+    const card = document.createElement('div');
+    card.style.cssText = 'position:relative;flex-shrink:0;border-radius:10px;border:1px solid var(--border);overflow:hidden;background:var(--glass);';
+
     if (f.mime && f.mime.startsWith('image/')) {
+      // Square thumbnail for images
+      card.style.width = '80px';
+      card.style.height = '80px';
       const img = document.createElement('img');
       img.src = f.data;
-      img.style.cssText = 'width:32px;height:32px;object-fit:cover;border-radius:4px;flex-shrink:0;';
-      row.appendChild(img);
+      img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
+      card.appendChild(img);
     } else {
+      // Compact vertical card for files
+      card.style.cssText += 'width:80px;height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:6px;box-sizing:border-box;';
       const ic = document.createElement('i');
       ic.className = 'ph ph-file-text';
-      ic.style.cssText = 'color:var(--accent);font-size:18px;flex-shrink:0;';
-      row.appendChild(ic);
+      ic.style.cssText = 'color:var(--accent);font-size:26px;';
+      card.appendChild(ic);
+      const name = document.createElement('span');
+      name.textContent = f.name;
+      name.style.cssText = 'font-size:9px;font-weight:700;color:var(--muted);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%;';
+      card.appendChild(name);
     }
-    // Name
-    const name = document.createElement('span');
-    name.textContent = f.name;
-    name.style.cssText = 'font-size:12px;font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-    row.appendChild(name);
-    // Remove button
+
+    // Remove (X) button on top-right
     const rm = document.createElement('button');
     rm.type = 'button';
     rm.innerHTML = '<i class="ph ph-x"></i>';
-    rm.style.cssText = 'background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;flex-shrink:0;padding:2px;';
+    rm.style.cssText = 'position:absolute;top:3px;right:3px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.6);border:none;color:#fff;cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;';
     rm.addEventListener('click', () => { stagedFiles.splice(idx, 1); renderStagingArea(); });
-    row.appendChild(rm);
-    list.appendChild(row);
+    card.appendChild(rm);
+
+    list.appendChild(card);
   });
+
   if (label) label.textContent = `${stagedFiles.length} / 5 files`;
-  el.stagingArea.style.display = stagedFiles.length > 0 ? 'flex' : 'none';
+  // Only hide if there are no files AND the upload bar is hidden
+  const uploading = el.uploadContainer && el.uploadContainer.style.display === 'block';
+  el.stagingArea.style.display = (stagedFiles.length > 0 || uploading) ? 'flex' : 'none';
 }
 
 // File Upload & Staging
 el.btnAttach.addEventListener('click', () => el.fileInput.click());
-el.fileInput.addEventListener('change', e => {
-  const file = e.target.files[0];
+function handleFileSelection(file) {
   if (!file) return;
 
   if (stagedFiles.length >= 5) {
     showErrorToast('Maximum 5 files allowed per message.');
-    el.fileInput.value = '';
     return;
   }
 
@@ -1927,12 +1997,13 @@ el.fileInput.addEventListener('change', e => {
   const maxBytes = currentMaxMB * 1024 * 1024;
   if (file.size > maxBytes) {
     showErrorToast(`Max file size is ${currentMaxMB}MB.`);
-    el.fileInput.value = '';
     return;
   }
 
-  el.uploadContainer.classList.add('active');
-  el.uploadFilename.textContent = file.name;
+  // Show the staging area container and the progress bar
+  el.stagingArea.style.display = 'flex';
+  el.uploadContainer.style.display = 'block';
+  el.uploadFilename.textContent = file.name || 'Pasted Image';
   el.uploadPercent.textContent = '0%';
   el.uploadFill.style.width = '0%';
 
@@ -1947,13 +2018,80 @@ el.fileInput.addEventListener('change', e => {
     el.uploadPercent.textContent = '100%';
     el.uploadFill.style.width = '100%';
     setTimeout(() => {
-      el.uploadContainer.classList.remove('active');
-      stagedFiles.push({ name: file.name, mime: file.type, data: reader.result });
+      el.uploadContainer.style.display = 'none';
+      stagedFiles.push({ name: file.name || 'image.png', mime: file.type, data: reader.result });
       renderStagingArea();
-      el.fileInput.value = '';
+      if (el.fileInput) el.fileInput.value = '';
     }, 400);
   };
   reader.readAsDataURL(file);
+}
+
+el.fileInput.addEventListener('change', e => {
+  handleFileSelection(e.target.files[0]);
+});
+
+// Intercept Paste events to capture images
+el.messageInput.addEventListener('paste', e => {
+  const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+  for (const item of items) {
+    if (item.type.indexOf('image/') === 0) {
+      const blob = item.getAsFile();
+      if (blob) {
+        e.preventDefault(); // Stop URL or string from pasting
+        handleFileSelection(blob);
+        break; // Only handle the first image if multiple
+      }
+    }
+  }
+});
+
+// Drag and Drop
+const dragOverlay = document.getElementById('drag-overlay');
+let dragCounter = 0;
+
+document.body.addEventListener('dragenter', e => {
+  if (e.dataTransfer && e.dataTransfer.types.includes('Files')) {
+    e.preventDefault();
+    dragCounter++;
+    if (dragOverlay) dragOverlay.classList.add('active');
+  }
+});
+
+document.body.addEventListener('dragleave', e => {
+  e.preventDefault();
+  dragCounter--;
+  if (dragCounter <= 0 && dragOverlay) {
+    dragCounter = 0;
+    dragOverlay.classList.remove('active');
+  }
+});
+
+document.body.addEventListener('dragover', e => {
+  e.preventDefault(); // necessary to allow dropping
+});
+
+document.body.addEventListener('drop', e => {
+  e.preventDefault();
+  dragCounter = 0;
+  if (dragOverlay) dragOverlay.classList.remove('active');
+
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+    for (let i = 0; i < e.dataTransfer.files.length; i++) {
+      if (stagedFiles.length >= 5) {
+        showErrorToast('Maximum 5 files allowed per message.');
+        break;
+      }
+      handleFileSelection(e.dataTransfer.files[i]);
+    }
+  } else {
+    // If it's text
+    const text = e.dataTransfer.getData('text/plain');
+    if (text && document.activeElement === el.messageInput) {
+      el.messageInput.value += text;
+      el.messageInput.dispatchEvent(new Event('input'));
+    }
+  }
 });
 
 // Emojis
